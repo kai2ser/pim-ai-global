@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export default function Footer() {
   return (
@@ -7,13 +8,14 @@ export default function Footer() {
         <div className="grid gap-8 md:grid-cols-3">
           {/* Brand */}
           <div>
-            <Link href="/" className="flex items-center gap-2 font-heading text-lg font-bold text-white">
-              <span className="rounded bg-[#374696] px-2 py-0.5 text-xs font-bold tracking-wider">
-                PIM
-              </span>
-              <span>
-                pim-ai<span className="text-[#8bb8e8]">.global</span>
-              </span>
+            <Link href="/" className="flex items-center">
+              <Image
+                src="/logo-pimpam.png"
+                alt="PIM PAM"
+                width={219}
+                height={94}
+                className="h-8 w-auto brightness-0 invert"
+              />
             </Link>
             <p className="mt-3 text-sm leading-relaxed">
               AI-powered retrieval and analysis of global public investment
