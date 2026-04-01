@@ -29,6 +29,7 @@ export default function Footer() {
             <h4 className="mb-4 text-sm font-semibold text-white">Navigation</h4>
             <ul className="space-y-2 text-sm">
               <li><Link href="/" className="hover:text-[#8bb8e8]">Home</Link></li>
+              <li><Link href="/release-notes" className="hover:text-[#8bb8e8]">Release Notes</Link></li>
               <li><Link href="/query" className="hover:text-[#8bb8e8]">Query</Link></li>
               <li><Link href="/statistics" className="hover:text-[#8bb8e8]">Statistics</Link></li>
               <li><Link href="/about" className="hover:text-[#8bb8e8]">About</Link></li>
