@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServiceClient, COLLECTIONS, type CollectionName } from "@/lib/supabase";
+import { getServiceClient, COLLECTIONS } from "@/lib/supabase";
 import { getEmbedding } from "@/lib/embeddings";
 import { generateAnswer, generateAnswerStream } from "@/lib/llm";
 import { MODELS, DEFAULT_MODEL } from "@/lib/models";
@@ -7,6 +7,14 @@ import { rateLimit } from "@/lib/rate-limit";
 
 const MAX_QUERY_LENGTH = 2000;
 const MAX_CONTEXT_CHARS = 12000;
+
+interface ChunkResult {
+  content: string;
+  source_file: string;
+  page_number: number;
+  similarity: number;
+  chunk_type: string;
+}
 
 // Rate limit: 20 requests per minute per IP
 const RATE_LIMIT_MAX = 20;
@@ -40,14 +48,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { query, collection, model: modelId, stream: streamMode } = (await req.json()) as {
-      query: string;
-      collection: CollectionName;
-      model?: string;
-      stream?: boolean;
-    };
+    const body = await req.json();
 
-    // ── Validation ────────────────────────────────────────────────────
+    // ── Runtime type validation ───────────────────────────────────────
+    const query = typeof body.query === "string" ? body.query : "";
+    const collection = typeof body.collection === "string" ? body.collection : "";
+    const modelId = typeof body.model === "string" ? body.model : undefined;
+    const streamMode = body.stream === true;
+
     if (!query || !collection) {
       return NextResponse.json(
         { error: "query and collection are required" },
@@ -106,9 +114,10 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 3. Build context (with truncation) ────────────────────────────
+    const typedChunks = chunks as ChunkResult[];
     let contextLength = 0;
-    const usedChunks: typeof chunks = [];
-    for (const c of chunks) {
+    const usedChunks: ChunkResult[] = [];
+    for (const c of typedChunks) {
       if (contextLength + c.content.length > MAX_CONTEXT_CHARS) break;
       usedChunks.push(c);
       contextLength += c.content.length;
@@ -116,7 +125,7 @@ export async function POST(req: NextRequest) {
 
     const context = usedChunks
       .map(
-        (c: { content: string; source_file: string; page_number: number; similarity: number }, i: number) =>
+        (c, i) =>
           `[Source ${i + 1}: ${c.source_file}, Page ${c.page_number}, Similarity: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`
       )
       .join("\n\n---\n\n");
@@ -126,14 +135,12 @@ export async function POST(req: NextRequest) {
 
     const userMessage = `Context:\n${context}\n\n---\n\nQuestion: ${query}`;
 
-    const sources = usedChunks.map(
-      (c: { source_file: string; page_number: number; similarity: number; content: string }) => ({
-        file: c.source_file,
-        page: c.page_number,
-        similarity: c.similarity,
-        excerpt: c.content.substring(0, 200) + "...",
-      })
-    );
+    const sources = usedChunks.map((c) => ({
+      file: c.source_file,
+      page: c.page_number,
+      similarity: c.similarity,
+      excerpt: c.content.substring(0, 200) + "...",
+    }));
 
     // ── 5a. Streaming response (SSE) ──────────────────────────────────
     if (streamMode) {

@@ -23,14 +23,16 @@ export default function StatisticsPage() {
     setError("");
     try {
       const res = await fetch("/api/stats");
-      const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Failed to load stats");
+        setError(`Server error: ${res.status}`);
         return;
       }
+      const data = await res.json();
       setStats(data.stats || []);
-    } catch {
-      setError("Failed to connect to the server");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load stats";
+      console.error("Stats fetch error:", err);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -197,7 +199,7 @@ export default function StatisticsPage() {
                 { dt: "Vector Database", dd: "Supabase pgvector" },
                 { dt: "Distance Metric", dd: "Cosine similarity" },
                 { dt: "Index Type", dd: "IVFFlat (100 lists)" },
-                { dt: "LLM for Answers", dd: "Claude 3.5 Sonnet" },
+                { dt: "LLM for Answers", dd: "Multi-model (Claude, GPT-4o)" },
                 { dt: "Chunk Strategy", dd: "1,000 chars / 200 overlap" },
                 { dt: "File Formats", dd: "PDF, DOCX, TXT" },
               ].map((item) => (

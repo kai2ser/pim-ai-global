@@ -95,15 +95,16 @@ export default function QueryPage() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      console.error("Query submission error:", err);
       setError("Failed to connect to the server");
     } finally {
       setLoading(false);
     }
   };
 
-  const selectedCol = COLLECTIONS.find((c) => c.id === collection)!;
-  const selectedModel = MODELS.find((m) => m.id === model)!;
+  const selectedCol = COLLECTIONS.find((c) => c.id === collection) ?? COLLECTIONS[0];
+  const selectedModel = MODELS.find((m) => m.id === model) ?? MODELS[0];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">

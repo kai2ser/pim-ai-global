@@ -1,17 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Browser client (uses anon key)
-export const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-// Server client (uses service role key — never expose to browser)
+// Server client (uses service role key — never expose to browser).
+// All DB operations go through this client via API routes.
 export function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  }
+  return createClient(url, key);
 }
 
 export type CollectionName = "pim_literature" | "pima_reports" | "wbg_pers";

@@ -40,15 +40,16 @@ export async function GET() {
           };
         }
 
-        const row: StatsRow = Array.isArray(data) ? data[0] : data;
+        const row: StatsRow | undefined =
+          Array.isArray(data) && data.length > 0 ? data[0] : data ?? undefined;
 
         return {
           collection_name: col.label,
-          total_chunks: row?.total_chunks || 0,
-          text_chunks: row?.text_chunks || 0,
-          image_chunks: row?.image_chunks || 0,
-          unique_documents: row?.unique_documents || 0,
-          avg_content_length: row?.avg_content_length || 0,
+          total_chunks: row?.total_chunks ?? 0,
+          text_chunks: row?.text_chunks ?? 0,
+          image_chunks: row?.image_chunks ?? 0,
+          unique_documents: row?.unique_documents ?? 0,
+          avg_content_length: row?.avg_content_length ?? 0,
         };
       })
     );
