@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { COLLECTIONS, type CollectionName } from "@/lib/supabase";
-import { Send, Loader2, FileText, ChevronDown } from "lucide-react";
+import { MODELS, DEFAULT_MODEL } from "@/lib/models";
+import { Send, Loader2, FileText, ChevronDown, Clock, Cpu } from "lucide-react";
 
 interface Source {
   file: string;
@@ -12,11 +13,20 @@ interface Source {
   excerpt: string;
 }
 
+interface QueryMeta {
+  model: string;
+  provider: string;
+  latencyMs: number;
+  tokens?: { input?: number; output?: number };
+}
+
 export default function QueryPage() {
   const [collection, setCollection] = useState<CollectionName>("pim_literature");
+  const [model, setModel] = useState(DEFAULT_MODEL);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
+  const [meta, setMeta] = useState<QueryMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -28,12 +38,13 @@ export default function QueryPage() {
     setError("");
     setAnswer("");
     setSources([]);
+    setMeta(null);
 
     try {
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim(), collection }),
+        body: JSON.stringify({ query: query.trim(), collection, model }),
       });
 
       const data = await res.json();
@@ -45,6 +56,12 @@ export default function QueryPage() {
 
       setAnswer(data.answer);
       setSources(data.sources || []);
+      setMeta({
+        model: data.model || model,
+        provider: data.provider || "",
+        latencyMs: data.latencyMs || 0,
+        tokens: data.tokens,
+      });
     } catch {
       setError("Failed to connect to the server");
     } finally {
@@ -53,6 +70,7 @@ export default function QueryPage() {
   };
 
   const selectedCol = COLLECTIONS.find((c) => c.id === collection)!;
+  const selectedModel = MODELS.find((m) => m.id === model)!;
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">
@@ -64,35 +82,62 @@ export default function QueryPage() {
         Search Document Collections
       </h1>
       <p className="mt-3 max-w-2xl text-[#778899]">
-        Select a document collection and submit your question. The system will
-        retrieve relevant passages and generate an AI-powered answer with source
-        citations.
+        Select a document collection, choose an AI model, and submit your
+        question. The system will retrieve relevant passages and generate an
+        AI-powered answer with source citations.
       </p>
 
       {/* Query Form */}
       <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-        {/* Collection selector */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-[#1d212b]">
-            Document Collection
-          </label>
-          <div className="relative">
-            <select
-              value={collection}
-              onChange={(e) => setCollection(e.target.value as CollectionName)}
-              className="w-full appearance-none rounded-lg border border-[#dce4f0] bg-white px-4 py-3 pr-10 text-sm text-[#1d212b] shadow-sm focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
-            >
-              {COLLECTIONS.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" />
+        {/* Row: Collection + Model selectors */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Collection selector */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#1d212b]">
+              Document Collection
+            </label>
+            <div className="relative">
+              <select
+                value={collection}
+                onChange={(e) => setCollection(e.target.value as CollectionName)}
+                className="w-full appearance-none rounded-lg border border-[#dce4f0] bg-white px-4 py-3 pr-10 text-sm text-[#1d212b] shadow-sm focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
+              >
+                {COLLECTIONS.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" />
+            </div>
+            <p className="mt-1 text-xs text-[#778899]">
+              {selectedCol.description}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-[#778899]">
-            {selectedCol.description}
-          </p>
+
+          {/* Model selector */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[#1d212b]">
+              AI Model
+            </label>
+            <div className="relative">
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full appearance-none rounded-lg border border-[#dce4f0] bg-white px-4 py-3 pr-10 text-sm text-[#1d212b] shadow-sm focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
+              >
+                {MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label} ({m.provider})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" />
+            </div>
+            <p className="mt-1 text-xs text-[#778899]">
+              {selectedModel.description}
+            </p>
+          </div>
         </div>
 
         {/* Query input */}
@@ -106,8 +151,12 @@ export default function QueryPage() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="e.g., What are the best practices for climate-smart public investment management?"
               rows={3}
+              maxLength={2000}
               className="w-full rounded-lg border border-[#dce4f0] bg-white px-4 py-3 text-sm text-[#1d212b] shadow-sm placeholder:text-[#b0b8c4] focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
             />
+            <span className="absolute bottom-2 right-3 text-xs text-[#b0b8c4]">
+              {query.length}/2000
+            </span>
           </div>
         </div>
 
@@ -137,9 +186,29 @@ export default function QueryPage() {
       {answer && (
         <div className="mt-8 space-y-6">
           <div className="rounded-lg border border-[#dce4f0] bg-white p-6 shadow-sm">
-            <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
-              Answer
-            </h2>
+            {/* Answer header with model badge */}
+            <div className="flex items-center justify-between">
+              <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
+                Answer
+              </h2>
+              {meta && (
+                <div className="flex items-center gap-3 text-xs text-[#778899]">
+                  <span className="flex items-center gap-1">
+                    <Cpu className="h-3 w-3" />
+                    {meta.model}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {(meta.latencyMs / 1000).toFixed(1)}s
+                  </span>
+                  {meta.tokens?.input && meta.tokens?.output && (
+                    <span>
+                      {meta.tokens.input + meta.tokens.output} tokens
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[#1d212b]">
               {answer}
             </div>

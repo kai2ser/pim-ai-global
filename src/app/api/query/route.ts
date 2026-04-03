@@ -1,18 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient, COLLECTIONS, type CollectionName } from "@/lib/supabase";
 import { getEmbedding } from "@/lib/embeddings";
-import Anthropic from "@anthropic-ai/sdk";
+import { generateAnswer } from "@/lib/llm";
+import { MODELS, DEFAULT_MODEL } from "@/lib/models";
+
+const MAX_QUERY_LENGTH = 2000;
+const MAX_CONTEXT_CHARS = 12000;
 
 export async function POST(req: NextRequest) {
   try {
-    const { query, collection } = (await req.json()) as {
+    const { query, collection, model: modelId } = (await req.json()) as {
       query: string;
       collection: CollectionName;
+      model?: string;
     };
 
+    // ── Validation ────────────────────────────────────────────────────
     if (!query || !collection) {
       return NextResponse.json(
         { error: "query and collection are required" },
+        { status: 400 }
+      );
+    }
+
+    if (query.length > MAX_QUERY_LENGTH) {
+      return NextResponse.json(
+        { error: `Query too long (max ${MAX_QUERY_LENGTH} characters)` },
         { status: 400 }
       );
     }
@@ -25,10 +38,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Embed the query
+    const selectedModel = modelId || DEFAULT_MODEL;
+    if (!MODELS.find((m) => m.id === selectedModel)) {
+      return NextResponse.json(
+        { error: `Invalid model: ${selectedModel}` },
+        { status: 400 }
+      );
+    }
+
+    // ── 1. Embed the query ────────────────────────────────────────────
     const queryEmbedding = await getEmbedding(query);
 
-    // 2. Retrieve similar chunks via Supabase RPC
+    // ── 2. Retrieve similar chunks ────────────────────────────────────
     const supabase = getServiceClient();
     const { data: chunks, error } = await supabase.rpc(col.matchFn, {
       query_embedding: queryEmbedding,
@@ -46,40 +67,42 @@ export async function POST(req: NextRequest) {
         answer:
           "No relevant documents found for your query in this collection. Try rephrasing or selecting a different collection.",
         sources: [],
+        model: selectedModel,
+        provider: "",
+        latencyMs: 0,
       });
     }
 
-    // 3. Build context from retrieved chunks
-    const context = chunks
+    // ── 3. Build context (with truncation) ────────────────────────────
+    let contextLength = 0;
+    const usedChunks: typeof chunks = [];
+    for (const c of chunks) {
+      if (contextLength + c.content.length > MAX_CONTEXT_CHARS) break;
+      usedChunks.push(c);
+      contextLength += c.content.length;
+    }
+
+    const context = usedChunks
       .map(
         (c: { content: string; source_file: string; page_number: number; similarity: number }, i: number) =>
           `[Source ${i + 1}: ${c.source_file}, Page ${c.page_number}, Similarity: ${(c.similarity * 100).toFixed(1)}%]\n${c.content}`
       )
       .join("\n\n---\n\n");
 
-    // 4. Generate answer with Claude
-    const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "Missing Anthropic API key in environment" }, { status: 500 });
-    }
-    const anthropic = new Anthropic({ apiKey });
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2048,
-      system: `You are a public investment management expert assistant. Answer the user's question based ONLY on the provided context from ${col.label}. Always cite your sources using [Source N] notation. If the context doesn't contain enough information, say so clearly.`,
-      messages: [
-        {
-          role: "user",
-          content: `Context:\n${context}\n\n---\n\nQuestion: ${query}`,
-        },
-      ],
-    });
+    // ── 4. Generate answer via LLM Router ─────────────────────────────
+    const systemPrompt = `You are a public investment management expert assistant. Answer the user's question based ONLY on the provided context from ${col.label}. Always cite your sources using [Source N] notation. If the context doesn't contain enough information, say so clearly.`;
 
-    const answer =
-      message.content[0].type === "text" ? message.content[0].text : "";
+    const userMessage = `Context:\n${context}\n\n---\n\nQuestion: ${query}`;
 
-    // 5. Return answer + sources
-    const sources = chunks.map(
+    const llmResponse = await generateAnswer(
+      selectedModel,
+      systemPrompt,
+      userMessage,
+      2048
+    );
+
+    // ── 5. Return answer + sources + metadata ─────────────────────────
+    const sources = usedChunks.map(
       (c: { source_file: string; page_number: number; similarity: number; content: string }) => ({
         file: c.source_file,
         page: c.page_number,
@@ -88,11 +111,20 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    return NextResponse.json({ answer, sources });
+    return NextResponse.json({
+      answer: llmResponse.text,
+      sources,
+      model: llmResponse.model,
+      provider: llmResponse.provider,
+      latencyMs: llmResponse.latencyMs,
+      tokens: {
+        input: llmResponse.inputTokens,
+        output: llmResponse.outputTokens,
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : "";
-    console.error("Query API error:", message, stack);
+    console.error("Query API error:", message);
     return NextResponse.json(
       { error: message },
       { status: 500 }
