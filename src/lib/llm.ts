@@ -113,3 +113,99 @@ export async function generateAnswer(
 
   throw new Error(`Provider "${entry.provider}" not implemented yet`);
 }
+
+// ── Streaming Router ───────────────────────────────────────────────────
+
+export async function* generateAnswerStream(
+  modelId: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number = 2048
+): AsyncGenerator<{ type: "text" | "done"; content: string; model?: string; provider?: string; inputTokens?: number; outputTokens?: number }> {
+  const entry = MODEL_MAP[modelId];
+  if (!entry) {
+    throw new Error(
+      `Unknown model: ${modelId}. Available: ${Object.keys(MODEL_MAP).join(", ")}`
+    );
+  }
+
+  // ── Anthropic Streaming ─────────────────────────────────────────────
+  if (entry.provider === "anthropic") {
+    const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
+
+    const client = new Anthropic({ apiKey });
+
+    const stream = client.messages.stream({
+      model: entry.modelId,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    for await (const event of stream) {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "text_delta"
+      ) {
+        yield { type: "text", content: event.delta.text };
+      }
+    }
+
+    const finalMessage = await stream.finalMessage();
+    yield {
+      type: "done",
+      content: "",
+      model: finalMessage.model,
+      provider: "Anthropic",
+      inputTokens: finalMessage.usage?.input_tokens,
+      outputTokens: finalMessage.usage?.output_tokens,
+    };
+    return;
+  }
+
+  // ── OpenAI Streaming ────────────────────────────────────────────────
+  if (entry.provider === "openai") {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+    const client = new OpenAI({ apiKey });
+
+    const stream = await client.chat.completions.create({
+      model: entry.modelId,
+      max_completion_tokens: maxTokens,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    });
+
+    let inputTokens: number | undefined;
+    let outputTokens: number | undefined;
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        yield { type: "text", content: delta };
+      }
+      if (chunk.usage) {
+        inputTokens = chunk.usage.prompt_tokens;
+        outputTokens = chunk.usage.completion_tokens;
+      }
+    }
+
+    yield {
+      type: "done",
+      content: "",
+      model: entry.modelId,
+      provider: "OpenAI",
+      inputTokens,
+      outputTokens,
+    };
+    return;
+  }
+
+  throw new Error(`Provider "${entry.provider}" not implemented yet`);
+}

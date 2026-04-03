@@ -44,24 +44,57 @@ export default function QueryPage() {
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim(), collection, model }),
+        body: JSON.stringify({ query: query.trim(), collection, model, stream: true }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        const data = await res.json();
         setError(data.error || "Something went wrong");
         return;
       }
 
-      setAnswer(data.answer);
-      setSources(data.sources || []);
-      setMeta({
-        model: data.model || model,
-        provider: data.provider || "",
-        latencyMs: data.latencyMs || 0,
-        tokens: data.tokens,
-      });
+      // ── Stream SSE response ──────────────────────────────────────────
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setError("Streaming not supported");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === "sources") {
+              setSources(event.sources || []);
+            } else if (event.type === "text") {
+              setAnswer((prev) => prev + event.content);
+            } else if (event.type === "done") {
+              setMeta({
+                model: event.model || model,
+                provider: event.provider || "",
+                latencyMs: event.latencyMs || 0,
+                tokens: event.tokens,
+              });
+            } else if (event.type === "error") {
+              setError(event.error);
+            }
+          } catch {
+            // Skip malformed SSE lines
+          }
+        }
+      }
     } catch {
       setError("Failed to connect to the server");
     } finally {
