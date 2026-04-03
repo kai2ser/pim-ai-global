@@ -130,8 +130,8 @@ export default function Home() {
             <div className="grid w-full max-w-3xl gap-4 sm:grid-cols-3">
               {[
                 { label: "Global PIM Literature", count: "12 docs" },
-                { label: "IMF PIMA Reports", count: "Pending" },
-                { label: "World Bank PFRs", count: "318 docs" },
+                { label: "IMF PIMA Reports", count: "107 docs" },
+                { label: "World Bank PFRs", count: "316 docs" },
               ].map((col) => (
                 <div
                   key={col.label}
