@@ -32,7 +32,7 @@ export default function Header() {
         </Link>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1">
+        <nav aria-label="Main navigation" className="hidden md:flex items-center gap-1">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -48,14 +48,17 @@ export default function Header() {
         <button
           className="md:hidden p-2"
           onClick={() => setMobileOpen(!mobileOpen)}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav"
+          aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
         >
-          {mobileOpen ? <X size={24} /> : <Menu size={24} />}
+          {mobileOpen ? <X size={24} aria-hidden="true" /> : <Menu size={24} aria-hidden="true" />}
         </button>
       </div>
 
       {/* Mobile nav */}
       {mobileOpen && (
-        <nav className="md:hidden border-t border-white/10 bg-[#1c2027] px-6 py-4">
+        <nav id="mobile-nav" aria-label="Mobile navigation" className="md:hidden border-t border-white/10 bg-[#1c2027] px-6 py-4">
           {navLinks.map((link) => (
             <Link
               key={link.href}

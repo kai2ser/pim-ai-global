@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Release Notes",
+  description:
+    "Track the latest updates, new features, and improvements to the PIM AI Global platform.",
+};
+
 const releases = [
   {
     version: "v1.0.0",

@@ -15,10 +15,35 @@ const firaSans = Fira_Sans({
   subsets: ["latin"],
 });
 
+const SITE_URL = "https://pim-ai-global.vercel.app";
+
 export const metadata: Metadata = {
-  title: "PIM AI Global — Public Investment Management Intelligence",
+  title: {
+    default: "PIM AI Global — Public Investment Management Intelligence",
+    template: "%s | PIM AI Global",
+  },
   description:
     "AI-powered retrieval and analysis of global public investment management guidance, IMF PIMA reports, and World Bank public finance reviews.",
+  metadataBase: new URL(SITE_URL),
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: SITE_URL,
+    siteName: "PIM AI Global",
+    title: "PIM AI Global — Public Investment Management Intelligence",
+    description:
+      "AI-powered search across World Bank, IMF, and global best practice documents on public investment management.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PIM AI Global",
+    description:
+      "AI-powered search across World Bank, IMF, and global PIM guidance documents.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({

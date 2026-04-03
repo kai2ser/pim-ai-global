@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { COLLECTIONS, type CollectionName } from "@/lib/supabase";
 import { MODELS, DEFAULT_MODEL } from "@/lib/models";
+import MarkdownRenderer from "@/components/markdown-renderer";
 import { Send, Loader2, FileText, ChevronDown, Clock, Cpu } from "lucide-react";
 
 interface Source {
@@ -29,6 +30,7 @@ export default function QueryPage() {
   const [meta, setMeta] = useState<QueryMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +105,14 @@ export default function QueryPage() {
     }
   };
 
+  // Keyboard shortcut: Cmd/Ctrl + Enter to submit
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      formRef.current?.requestSubmit();
+    }
+  };
+
   const selectedCol = COLLECTIONS.find((c) => c.id === collection) ?? COLLECTIONS[0];
   const selectedModel = MODELS.find((m) => m.id === model) ?? MODELS[0];
 
@@ -122,16 +132,22 @@ export default function QueryPage() {
       </p>
 
       {/* Query Form */}
-      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      <form ref={formRef} onSubmit={handleSubmit} className="mt-8 space-y-4">
         {/* Row: Collection + Model selectors */}
         <div className="grid gap-4 sm:grid-cols-2">
           {/* Collection selector */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-[#1d212b]">
+            <label
+              htmlFor="collection-select"
+              className="mb-2 block text-sm font-medium text-[#1d212b]"
+            >
               Document Collection
             </label>
             <div className="relative">
               <select
+                id="collection-select"
+                aria-label="Select document collection"
+                aria-describedby="collection-desc"
                 value={collection}
                 onChange={(e) => setCollection(e.target.value as CollectionName)}
                 className="w-full appearance-none rounded-lg border border-[#dce4f0] bg-white px-4 py-3 pr-10 text-sm text-[#1d212b] shadow-sm focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
@@ -142,20 +158,26 @@ export default function QueryPage() {
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" aria-hidden="true" />
             </div>
-            <p className="mt-1 text-xs text-[#778899]">
+            <p id="collection-desc" className="mt-1 text-xs text-[#778899]">
               {selectedCol.description}
             </p>
           </div>
 
           {/* Model selector */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-[#1d212b]">
+            <label
+              htmlFor="model-select"
+              className="mb-2 block text-sm font-medium text-[#1d212b]"
+            >
               AI Model
             </label>
             <div className="relative">
               <select
+                id="model-select"
+                aria-label="Select AI model"
+                aria-describedby="model-desc"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full appearance-none rounded-lg border border-[#dce4f0] bg-white px-4 py-3 pr-10 text-sm text-[#1d212b] shadow-sm focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
@@ -166,9 +188,9 @@ export default function QueryPage() {
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#778899]" aria-hidden="true" />
             </div>
-            <p className="mt-1 text-xs text-[#778899]">
+            <p id="model-desc" className="mt-1 text-xs text-[#778899]">
               {selectedModel.description}
             </p>
           </div>
@@ -176,20 +198,27 @@ export default function QueryPage() {
 
         {/* Query input */}
         <div>
-          <label className="mb-2 block text-sm font-medium text-[#1d212b]">
+          <label
+            htmlFor="query-input"
+            className="mb-2 block text-sm font-medium text-[#1d212b]"
+          >
             Your Question
           </label>
           <div className="relative">
             <textarea
+              id="query-input"
+              aria-label="Enter your question"
+              aria-describedby="query-hint"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="e.g., What are the best practices for climate-smart public investment management?"
               rows={3}
               maxLength={2000}
               className="w-full rounded-lg border border-[#dce4f0] bg-white px-4 py-3 text-sm text-[#1d212b] shadow-sm placeholder:text-[#b0b8c4] focus:border-[#4472c4] focus:outline-none focus:ring-2 focus:ring-[#4472c4]/20"
             />
-            <span className="absolute bottom-2 right-3 text-xs text-[#b0b8c4]">
-              {query.length}/2000
+            <span id="query-hint" className="absolute bottom-2 right-3 text-xs text-[#b0b8c4]">
+              {query.length}/2000 &middot; {navigator?.platform?.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to submit
             </span>
           </div>
         </div>
@@ -197,12 +226,12 @@ export default function QueryPage() {
         <Button type="submit" disabled={loading || !query.trim()} size="lg">
           {loading ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Searching &amp; Generating...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+              <span role="status">Searching &amp; Generating...</span>
             </>
           ) : (
             <>
-              <Send className="mr-2 h-4 w-4" />
+              <Send className="mr-2 h-4 w-4" aria-hidden="true" />
               Submit Query
             </>
           )}
@@ -211,15 +240,19 @@ export default function QueryPage() {
 
       {/* Error */}
       {error && (
-        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div role="alert" className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {/* Answer */}
       {answer && (
-        <div className="mt-8 space-y-6">
-          <div className="rounded-lg border border-[#dce4f0] bg-white p-6 shadow-sm">
+        <div className="mt-8 space-y-6" aria-live="polite">
+          <div
+            role="region"
+            aria-label="AI-generated answer"
+            className="rounded-lg border border-[#dce4f0] bg-white p-6 shadow-sm"
+          >
             {/* Answer header with model badge */}
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
@@ -228,11 +261,11 @@ export default function QueryPage() {
               {meta && (
                 <div className="flex items-center gap-3 text-xs text-[#778899]">
                   <span className="flex items-center gap-1">
-                    <Cpu className="h-3 w-3" />
+                    <Cpu className="h-3 w-3" aria-hidden="true" />
                     {meta.model}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
+                    <Clock className="h-3 w-3" aria-hidden="true" />
                     {(meta.latencyMs / 1000).toFixed(1)}s
                   </span>
                   {meta.tokens?.input && meta.tokens?.output && (
@@ -243,14 +276,14 @@ export default function QueryPage() {
                 </div>
               )}
             </div>
-            <div className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[#1d212b]">
-              {answer}
+            <div className="mt-3 text-sm leading-relaxed">
+              <MarkdownRenderer content={answer} />
             </div>
           </div>
 
           {/* Sources */}
           {sources.length > 0 && (
-            <div>
+            <div role="region" aria-label="Source documents">
               <h3 className="font-heading text-base font-semibold text-[#1d212b]">
                 Sources ({sources.length})
               </h3>
@@ -261,7 +294,7 @@ export default function QueryPage() {
                     className="rounded-lg border border-[#dce4f0] bg-[#f0f5ff]/50 p-4"
                   >
                     <div className="flex items-start gap-3">
-                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[#4472c4]" />
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[#4472c4]" aria-hidden="true" />
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-[#1d212b]">
                           {s.file}

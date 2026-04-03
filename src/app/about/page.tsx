@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "About",
+  description:
+    "Learn about PIM AI Global, a RAG application for public investment management professionals with access to World Bank, IMF, and global guidance documents.",
+};
+
 export default function AboutPage() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-12">
@@ -61,7 +69,7 @@ export default function AboutPage() {
         </h2>
         <ul className="list-disc space-y-1 pl-5 text-[#778899]">
           <li>
-            <strong className="text-[#1d212b]">Frontend:</strong> Next.js 15, Tailwind CSS, TypeScript
+            <strong className="text-[#1d212b]">Frontend:</strong> Next.js 16, Tailwind CSS, TypeScript
           </li>
           <li>
             <strong className="text-[#1d212b]">Vector Database:</strong> Supabase
@@ -72,8 +80,8 @@ export default function AboutPage() {
             text-embedding-3-small (1536 dimensions)
           </li>
           <li>
-            <strong className="text-[#1d212b]">LLM:</strong> Anthropic Claude
-            3.5 Sonnet for answer generation
+            <strong className="text-[#1d212b]">LLM:</strong> Multi-model support
+            (Anthropic Claude, OpenAI GPT-4o) for answer generation
           </li>
           <li>
             <strong className="text-[#1d212b]">Document Parsing:</strong>{" "}
