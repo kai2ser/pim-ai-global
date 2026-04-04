@@ -4,6 +4,14 @@ import { getEmbedding } from "@/lib/embeddings";
 import { generateAnswer, generateAnswerStream } from "@/lib/llm";
 import { MODELS, DEFAULT_MODEL } from "@/lib/models";
 import { rateLimit } from "@/lib/rate-limit";
+import {
+  getCachedEmbedding,
+  setCachedEmbedding,
+  getCachedResponse,
+  setCachedResponse,
+  responseCacheKey,
+} from "@/lib/cache";
+import { logQuery, timed } from "@/lib/logger";
 
 const MAX_QUERY_LENGTH = 2000;
 const MAX_CONTEXT_CHARS = 12000;
@@ -21,6 +29,8 @@ const RATE_LIMIT_MAX = 20;
 const RATE_LIMIT_WINDOW = 60_000;
 
 export async function POST(req: NextRequest) {
+  const requestStart = Date.now();
+
   try {
     // ── Rate limiting ─────────────────────────────────────────────────
     const ip =
@@ -86,30 +96,119 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── 1. Embed the query ────────────────────────────────────────────
-    const queryEmbedding = await getEmbedding(query);
+    // ── Check response cache (non-streaming only) ─────────────────────
+    const cacheKey = responseCacheKey(query, collection, selectedModel);
+
+    if (!streamMode) {
+      try {
+        const cached = await getCachedResponse(cacheKey);
+        if (cached) {
+          logQuery({
+            query_text: query,
+            collection,
+            model: selectedModel,
+            provider: cached.provider,
+            ip,
+            total_ms: Date.now() - requestStart,
+            input_tokens: cached.input_tokens,
+            output_tokens: cached.output_tokens,
+            chunk_count: cached.sources.length,
+            cache_hit: true,
+          });
+
+          return NextResponse.json(
+            {
+              answer: cached.answer,
+              sources: cached.sources,
+              model: selectedModel,
+              provider: cached.provider,
+              latencyMs: Date.now() - requestStart,
+              tokens: {
+                input: cached.input_tokens,
+                output: cached.output_tokens,
+              },
+              cached: true,
+            },
+            {
+              headers: {
+                "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
+                "X-RateLimit-Remaining": String(remaining),
+                "X-Cache": "HIT",
+              },
+            }
+          );
+        }
+      } catch {
+        // Cache miss or error — proceed normally
+      }
+    }
+
+    // ── 1. Embed the query (with cache) ───────────────────────────────
+    let embeddingCacheHit = false;
+    const [queryEmbedding, embeddingMs] = await timed(async () => {
+      // Try embedding cache first
+      try {
+        const cached = await getCachedEmbedding(query);
+        if (cached) {
+          embeddingCacheHit = true;
+          return cached;
+        }
+      } catch {
+        // Cache miss — proceed to OpenAI
+      }
+
+      const embedding = await getEmbedding(query);
+
+      // Cache the new embedding (fire and forget)
+      setCachedEmbedding(query, embedding).catch(() => {});
+
+      return embedding;
+    });
 
     // ── 2. Retrieve similar chunks ────────────────────────────────────
-    const supabase = getServiceClient();
-    const { data: chunks, error } = await supabase.rpc(col.matchFn, {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.3,
-      match_count: 8,
+    const [{ chunks, error }, retrievalMs] = await timed(async () => {
+      const supabase = getServiceClient();
+      const { data: chunks, error } = await supabase.rpc(col.matchFn, {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.3,
+        match_count: 8,
+      });
+      return { chunks, error };
     });
 
     if (error) {
       console.error("Supabase RPC error:", error);
+      logQuery({
+        query_text: query,
+        collection,
+        model: selectedModel,
+        ip,
+        embedding_ms: embeddingMs,
+        retrieval_ms: retrievalMs,
+        total_ms: Date.now() - requestStart,
+        error: error.message,
+      });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     if (!chunks || chunks.length === 0) {
+      logQuery({
+        query_text: query,
+        collection,
+        model: selectedModel,
+        ip,
+        embedding_ms: embeddingMs,
+        retrieval_ms: retrievalMs,
+        total_ms: Date.now() - requestStart,
+        chunk_count: 0,
+      });
       return NextResponse.json({
         answer:
           "No relevant documents found for your query in this collection. Try rephrasing or selecting a different collection.",
         sources: [],
         model: selectedModel,
         provider: "",
-        latencyMs: 0,
+        latencyMs: Date.now() - requestStart,
       });
     }
 
@@ -144,8 +243,10 @@ export async function POST(req: NextRequest) {
 
     // ── 5a. Streaming response (SSE) ──────────────────────────────────
     if (streamMode) {
-      const start = Date.now();
+      const llmStart = Date.now();
       const encoder = new TextEncoder();
+      let fullAnswer = "";
+
       const stream = new ReadableStream({
         async start(controller) {
           try {
@@ -154,31 +255,82 @@ export async function POST(req: NextRequest) {
               encoder.encode(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`)
             );
 
+            let streamProvider = "";
+            let streamInputTokens = 0;
+            let streamOutputTokens = 0;
+
             // Stream LLM tokens
             for await (const event of generateAnswerStream(selectedModel, systemPrompt, userMessage, 2048)) {
               if (event.type === "text") {
+                fullAnswer += event.content;
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ type: "text", content: event.content })}\n\n`)
                 );
               } else if (event.type === "done") {
+                streamProvider = event.provider ?? "";
+                streamInputTokens = event.inputTokens ?? 0;
+                streamOutputTokens = event.outputTokens ?? 0;
+                const totalMs = Date.now() - requestStart;
+
                 controller.enqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
                       type: "done",
                       model: event.model,
                       provider: event.provider,
-                      latencyMs: Date.now() - start,
+                      latencyMs: totalMs,
                       tokens: { input: event.inputTokens, output: event.outputTokens },
+                      embeddingCached: embeddingCacheHit,
                     })}\n\n`
                   )
                 );
               }
             }
+
+            const llmMs = Date.now() - llmStart;
+            const totalMs = Date.now() - requestStart;
+
+            // Log the query
+            logQuery({
+              query_text: query,
+              collection,
+              model: selectedModel,
+              provider: streamProvider,
+              ip,
+              embedding_ms: embeddingMs,
+              retrieval_ms: retrievalMs,
+              llm_ms: llmMs,
+              total_ms: totalMs,
+              input_tokens: streamInputTokens,
+              output_tokens: streamOutputTokens,
+              chunk_count: usedChunks.length,
+              cache_hit: false,
+            });
+
+            // Cache the response (fire and forget)
+            setCachedResponse(cacheKey, query, collection, selectedModel, {
+              answer: fullAnswer,
+              sources,
+              provider: streamProvider,
+              input_tokens: streamInputTokens,
+              output_tokens: streamOutputTokens,
+            }).catch(() => {});
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "error", error: msg })}\n\n`)
             );
+            logQuery({
+              query_text: query,
+              collection,
+              model: selectedModel,
+              ip,
+              embedding_ms: embeddingMs,
+              retrieval_ms: retrievalMs,
+              total_ms: Date.now() - requestStart,
+              chunk_count: usedChunks.length,
+              error: msg,
+            });
           } finally {
             controller.close();
           }
@@ -192,17 +344,43 @@ export async function POST(req: NextRequest) {
           Connection: "keep-alive",
           "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
           "X-RateLimit-Remaining": String(remaining),
+          "X-Cache": "MISS",
         },
       });
     }
 
-    // ── 5b. Non-streaming response (legacy) ───────────────────────────
-    const llmResponse = await generateAnswer(
-      selectedModel,
-      systemPrompt,
-      userMessage,
-      2048
+    // ── 5b. Non-streaming response ────────────────────────────────────
+    const [llmResponse, llmMs] = await timed(() =>
+      generateAnswer(selectedModel, systemPrompt, userMessage, 2048)
     );
+
+    const totalMs = Date.now() - requestStart;
+
+    // Log the query
+    logQuery({
+      query_text: query,
+      collection,
+      model: selectedModel,
+      provider: llmResponse.provider,
+      ip,
+      embedding_ms: embeddingMs,
+      retrieval_ms: retrievalMs,
+      llm_ms: llmMs,
+      total_ms: totalMs,
+      input_tokens: llmResponse.inputTokens,
+      output_tokens: llmResponse.outputTokens,
+      chunk_count: usedChunks.length,
+      cache_hit: false,
+    });
+
+    // Cache the response (fire and forget)
+    setCachedResponse(cacheKey, query, collection, selectedModel, {
+      answer: llmResponse.text,
+      sources,
+      provider: llmResponse.provider,
+      input_tokens: llmResponse.inputTokens ?? 0,
+      output_tokens: llmResponse.outputTokens ?? 0,
+    }).catch(() => {});
 
     return NextResponse.json(
       {
@@ -210,16 +388,18 @@ export async function POST(req: NextRequest) {
         sources,
         model: llmResponse.model,
         provider: llmResponse.provider,
-        latencyMs: llmResponse.latencyMs,
+        latencyMs: totalMs,
         tokens: {
           input: llmResponse.inputTokens,
           output: llmResponse.outputTokens,
         },
+        cached: false,
       },
       {
         headers: {
           "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
           "X-RateLimit-Remaining": String(remaining),
+          "X-Cache": "MISS",
         },
       }
     );
