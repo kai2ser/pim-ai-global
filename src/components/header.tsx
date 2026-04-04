@@ -10,6 +10,7 @@ const navLinks = [
   { label: "Release Notes", href: "/release-notes" },
   { label: "Query", href: "/query" },
   { label: "Statistics", href: "/statistics" },
+  { label: "Analytics", href: "/analytics" },
   { label: "About", href: "/about" },
 ];
 

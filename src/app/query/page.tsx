@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { COLLECTIONS, type CollectionName } from "@/lib/supabase";
 import { MODELS, DEFAULT_MODEL } from "@/lib/models";
 import MarkdownRenderer from "@/components/markdown-renderer";
-import { Send, Loader2, FileText, ChevronDown, Clock, Cpu } from "lucide-react";
+import { Send, Loader2, FileText, ChevronDown, Clock, Cpu, Copy, Check, History, Trash2 } from "lucide-react";
 
 interface Source {
   file: string;
@@ -21,6 +21,33 @@ interface QueryMeta {
   tokens?: { input?: number; output?: number };
 }
 
+interface HistoryEntry {
+  query: string;
+  collection: CollectionName;
+  model: string;
+  timestamp: number;
+}
+
+const HISTORY_KEY = "pim-ai-query-history";
+const MAX_HISTORY = 20;
+
+function loadHistory(): HistoryEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)));
+  } catch {
+    // localStorage unavailable
+  }
+}
+
 export default function QueryPage() {
   const [collection, setCollection] = useState<CollectionName>("pim_literature");
   const [model, setModel] = useState(DEFAULT_MODEL);
@@ -30,7 +57,33 @@ export default function QueryPage() {
   const [meta, setMeta] = useState<QueryMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+
+  // Load history on mount
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  const addToHistory = useCallback((q: string, col: CollectionName, mod: string) => {
+    const entry: HistoryEntry = { query: q, collection: col, model: mod, timestamp: Date.now() };
+    const updated = [entry, ...loadHistory().filter((h) => h.query !== q)].slice(0, MAX_HISTORY);
+    saveHistory(updated);
+    setHistory(updated);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    saveHistory([]);
+    setHistory([]);
+  }, []);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(answer);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +94,9 @@ export default function QueryPage() {
     setAnswer("");
     setSources([]);
     setMeta(null);
+    setCopied(false);
+
+    addToHistory(query.trim(), collection, model);
 
     try {
       const res = await fetch("/api/query", {
@@ -130,6 +186,59 @@ export default function QueryPage() {
         question. The system will retrieve relevant passages and generate an
         AI-powered answer with source citations.
       </p>
+
+      {/* Query History */}
+      {history.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="flex items-center gap-2 text-sm font-medium text-[#4472c4] hover:text-[#374696]"
+          >
+            <History className="h-4 w-4" aria-hidden="true" />
+            Recent queries ({history.length})
+            <ChevronDown
+              className={`h-3 w-3 transition-transform ${showHistory ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+          {showHistory && (
+            <div className="mt-2 rounded-lg border border-[#dce4f0] bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-[#dce4f0] px-4 py-2">
+                <span className="text-xs font-medium text-[#778899]">Query History</span>
+                <button
+                  onClick={clearHistory}
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600"
+                >
+                  <Trash2 className="h-3 w-3" aria-hidden="true" />
+                  Clear
+                </button>
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {history.map((h, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setQuery(h.query);
+                      setCollection(h.collection);
+                      setModel(h.model);
+                      setShowHistory(false);
+                    }}
+                    className="flex w-full items-start gap-3 border-b border-[#dce4f0] px-4 py-2.5 text-left last:border-b-0 hover:bg-[#f0f5ff]/50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-[#1d212b]">{h.query}</p>
+                      <p className="mt-0.5 text-xs text-[#778899]">
+                        {COLLECTIONS.find((c) => c.id === h.collection)?.label} &middot;{" "}
+                        {new Date(h.timestamp).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Query Form */}
       <form ref={formRef} onSubmit={handleSubmit} className="mt-8 space-y-4">
@@ -253,11 +362,30 @@ export default function QueryPage() {
             aria-label="AI-generated answer"
             className="rounded-lg border border-[#dce4f0] bg-white p-6 shadow-sm"
           >
-            {/* Answer header with model badge */}
+            {/* Answer header with model badge + copy button */}
             <div className="flex items-center justify-between">
-              <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
-                Answer
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
+                  Answer
+                </h2>
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-1 rounded-md border border-[#dce4f0] px-2 py-1 text-xs text-[#778899] transition-colors hover:border-[#4472c4] hover:text-[#4472c4]"
+                  aria-label="Copy answer to clipboard"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-3 w-3" aria-hidden="true" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" aria-hidden="true" />
+                      Copy
+                    </>
+                  )}
+                </button>
+              </div>
               {meta && (
                 <div className="flex items-center gap-3 text-xs text-[#778899]">
                   <span className="flex items-center gap-1">

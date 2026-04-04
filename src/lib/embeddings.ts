@@ -1,12 +1,19 @@
 import OpenAI from "openai";
+import { getServerEnv } from "@/lib/env";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) {
+    _openai = new OpenAI({ apiKey: getServerEnv().OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 export async function getEmbedding(text: string): Promise<number[]> {
   const cleaned = text.replace(/\n/g, " ").trim();
   if (!cleaned) return [];
 
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: "text-embedding-3-small",
     input: cleaned,
   });
@@ -22,7 +29,7 @@ export async function getEmbeddings(
 
   if (nonEmpty.length === 0) return [];
 
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: "text-embedding-3-small",
     input: nonEmpty,
   });
