@@ -32,23 +32,29 @@ export default function Footer() {
               <li><Link href="/release-notes" className="hover:text-[#8bb8e8]">Release Notes</Link></li>
               <li><Link href="/query" className="hover:text-[#8bb8e8]">Query</Link></li>
               <li><Link href="/statistics" className="hover:text-[#8bb8e8]">Statistics</Link></li>
+              <li><Link href="/analytics" className="hover:text-[#8bb8e8]">Analytics</Link></li>
               <li><Link href="/about" className="hover:text-[#8bb8e8]">About</Link></li>
             </ul>
           </div>
 
-          {/* Info */}
+          {/* Collections + Tech */}
           <div>
             <h4 className="mb-4 text-sm font-semibold text-white">Document Collections</h4>
             <ul className="space-y-2 text-sm">
-              <li>Global PIM Good Practices</li>
-              <li>IMF PIMA Reports</li>
-              <li>World Bank Public Finance Reviews</li>
+              <li>Global PIM Good Practices (12 docs)</li>
+              <li>IMF PIMA Reports (107 docs)</li>
+              <li>World Bank Public Finance Reviews (316 docs)</li>
             </ul>
+            <h4 className="mb-3 mt-6 text-sm font-semibold text-white">Technology</h4>
+            <p className="text-xs leading-relaxed text-gray-500">
+              Next.js 16 &middot; Supabase pgvector &middot; OpenAI Embeddings
+              &middot; Multi-LLM (Claude, GPT-4o) &middot; Vercel
+            </p>
           </div>
         </div>
 
         <div className="mt-10 border-t border-white/10 pt-6 text-center text-xs text-gray-500">
-          &copy; {new Date().getFullYear()} PIM AI Global. Built with Next.js, Supabase &amp; OpenAI.
+          &copy; {new Date().getFullYear()} PIM AI Global. Built with Next.js, Supabase, OpenAI &amp; Anthropic.
         </div>
       </div>
     </footer>
