@@ -13,6 +13,42 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
+// ── Error helpers ──────────────────────────────────────────────────────
+
+/**
+ * Convert raw API errors into user-friendly messages.
+ */
+export function friendlyError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+
+  // Anthropic-specific errors
+  if (msg.includes("overloaded") || msg.includes("Overloaded")) {
+    return "The AI model is temporarily overloaded. Please try again in a few seconds, or switch to a different model.";
+  }
+  if (msg.includes("rate_limit") || msg.includes("rate limit") || msg.includes("429")) {
+    return "API rate limit reached. Please wait a moment and try again.";
+  }
+  if (msg.includes("authentication") || msg.includes("401") || msg.includes("invalid x-api-key")) {
+    return "API authentication error. Please contact the administrator.";
+  }
+  if (msg.includes("insufficient_quota") || msg.includes("billing")) {
+    return "API quota exceeded. Please contact the administrator.";
+  }
+  if (msg.includes("context_length") || msg.includes("maximum context")) {
+    return "The query and context are too long for this model. Try a shorter question or a different model.";
+  }
+  if (msg.includes("timeout") || msg.includes("ETIMEDOUT") || msg.includes("ECONNRESET")) {
+    return "The request timed out. Please try again.";
+  }
+
+  // Generic fallback — don't leak raw JSON/stack traces
+  if (msg.startsWith("{") || msg.includes("stack") || msg.length > 200) {
+    return "An unexpected error occurred with the AI model. Please try again or switch to a different model.";
+  }
+
+  return msg;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────
 
 export interface LLMResponse {

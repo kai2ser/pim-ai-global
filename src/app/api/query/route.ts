@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient, COLLECTIONS } from "@/lib/supabase";
 import { getEmbedding } from "@/lib/embeddings";
-import { generateAnswer, generateAnswerStream } from "@/lib/llm";
+import { generateAnswer, generateAnswerStream, friendlyError } from "@/lib/llm";
 import { MODELS, DEFAULT_MODEL } from "@/lib/models";
 import { rateLimit } from "@/lib/rate-limit";
 import {
@@ -316,9 +316,11 @@ export async function POST(req: NextRequest) {
               output_tokens: streamOutputTokens,
             }).catch(() => {});
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const rawMsg = err instanceof Error ? err.message : String(err);
+            const userMsg = friendlyError(err);
+            console.error("LLM streaming error:", rawMsg);
             controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: "error", error: msg })}\n\n`)
+              encoder.encode(`data: ${JSON.stringify({ type: "error", error: userMsg })}\n\n`)
             );
             logQuery({
               query_text: query,
@@ -329,7 +331,7 @@ export async function POST(req: NextRequest) {
               retrieval_ms: retrievalMs,
               total_ms: Date.now() - requestStart,
               chunk_count: usedChunks.length,
-              error: msg,
+              error: rawMsg,
             });
           } finally {
             controller.close();
@@ -404,10 +406,10 @@ export async function POST(req: NextRequest) {
       }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Query API error:", message);
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    console.error("Query API error:", rawMessage);
     return NextResponse.json(
-      { error: message },
+      { error: friendlyError(err) },
       { status: 500 }
     );
   }
