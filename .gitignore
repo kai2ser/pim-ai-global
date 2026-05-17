@@ -33,8 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# scripts (local ingestion only)
-/scripts/
+# scripts (local ingestion only — kept out of the repo because each
+# ingest invocation is a one-off operational task, not source code).
+# Migration scripts that ship as part of a feature ARE tracked.
+/scripts/*
+!/scripts/migrate/
 
 # shell helpers
 start-dev.sh

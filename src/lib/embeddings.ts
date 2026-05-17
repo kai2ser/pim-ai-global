@@ -1,6 +1,12 @@
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
 
+// text-embedding-3-large produces 3072-dim vectors stored as halfvec(3072)
+// in the chunk tables. All four collections share this model so retrieval
+// uses a single embedding space across pim_literature, pima_reports,
+// wbg_pers, and pefa_reports.
+const EMBED_MODEL = "text-embedding-3-large";
+
 let _openai: OpenAI | null = null;
 function getOpenAI() {
   if (!_openai) {
@@ -14,7 +20,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
   if (!cleaned) return [];
 
   const response = await getOpenAI().embeddings.create({
-    model: "text-embedding-3-small",
+    model: EMBED_MODEL,
     input: cleaned,
   });
 
@@ -30,7 +36,7 @@ export async function getEmbeddings(
   if (nonEmpty.length === 0) return [];
 
   const response = await getOpenAI().embeddings.create({
-    model: "text-embedding-3-small",
+    model: EMBED_MODEL,
     input: nonEmpty,
   });
 
