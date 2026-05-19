@@ -30,7 +30,7 @@ export const MODELS: ModelOption[] = [
   },
   {
     id: "claude-haiku",
-    label: "Claude Haiku 3.5",
+    label: "Claude Haiku 4.5",
     provider: "anthropic",
     description: "Anthropic's fastest model — low latency, lower cost.",
   },

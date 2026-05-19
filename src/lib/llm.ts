@@ -72,7 +72,7 @@ interface MapEntry {
 
 const MODEL_MAP: Record<string, MapEntry> = {
   "claude-sonnet":  { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
-  "claude-haiku":   { provider: "anthropic", modelId: "claude-3-5-haiku-20241022" },
+  "claude-haiku":   { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
   "claude-opus":    { provider: "anthropic", modelId: "claude-opus-4-20250514" },
   "gpt-4o":         { provider: "openai",    modelId: "gpt-4o" },
   "gpt-4o-mini":    { provider: "openai",    modelId: "gpt-4o-mini" },
