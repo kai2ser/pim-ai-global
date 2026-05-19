@@ -48,3 +48,4 @@ start-dev.sh
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env*.local
