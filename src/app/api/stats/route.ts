@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServiceClient } from "@/lib/supabase";
+import { getServiceClient, COLLECTIONS } from "@/lib/supabase";
 
 // Cache stats for 60 seconds to avoid hammering the DB
 export const revalidate = 60;
@@ -12,25 +12,20 @@ interface StatsRow {
   avg_content_length: number;
 }
 
-const COLLECTIONS = [
-  { rpc: "stats_pim_literature", label: "Global PIM Good Practices" },
-  { rpc: "stats_pima_reports", label: "IMF PIMA Reports" },
-  { rpc: "stats_wbg_pers", label: "World Bank PFRs" },
-] as const;
-
 export async function GET() {
   try {
     const supabase = getServiceClient();
 
-    // 3 parallel RPC calls — each is a single optimized SQL query
+    // One parallel RPC call per collection (4 once PEFA is merged).
     const results = await Promise.all(
       COLLECTIONS.map(async (col) => {
-        const { data, error } = await supabase.rpc(col.rpc);
+        const { data, error } = await supabase.rpc(col.statsFn);
 
         if (error) {
-          console.error(`Stats RPC error for ${col.rpc}:`, error.message);
+          console.error(`Stats RPC error for ${col.statsFn}:`, error.message);
           // Return zeros on error instead of failing the whole request
           return {
+            collection_id: col.id,
             collection_name: col.label,
             total_chunks: 0,
             text_chunks: 0,
@@ -44,6 +39,7 @@ export async function GET() {
           Array.isArray(data) && data.length > 0 ? data[0] : data ?? undefined;
 
         return {
+          collection_id: col.id,
           collection_name: col.label,
           total_chunks: row?.total_chunks ?? 0,
           text_chunks: row?.text_chunks ?? 0,

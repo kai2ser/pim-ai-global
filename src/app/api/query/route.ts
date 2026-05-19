@@ -230,7 +230,20 @@ export async function POST(req: NextRequest) {
       .join("\n\n---\n\n");
 
     // ── 4. Prepare prompt ───────────────────────────────────────────────
-    const systemPrompt = `You are a public investment management expert assistant. Answer the user's question based ONLY on the provided context from ${col.label}. Always cite your sources using [Source N] notation. If the context doesn't contain enough information, say so clearly.`;
+    // PEFA queries get an indicator-aware system prompt; the other three
+    // collections share the Public Investment Management baseline. The
+    // `domain` field on the collection drives the branch.
+    const systemPrompt =
+      col.domain === "pefa"
+        ? `You are a specialist in Public Expenditure and Financial Accountability (PEFA) assessments and public financial management (PFM) reform. Answer the user's question based ONLY on the provided context from ${col.label} — country-level PEFA assessment reports.
+
+Rules:
+- Cite sources using [Source N] notation alongside country, year, and page number when available
+- When comparing countries, name each one explicitly and cite each PEFA report
+- Distinguish PEFA scores (A, B, C, D, D+) from narrative judgments; quote PEFA indicator codes (PI-1, PI-2 …) when used
+- If the context doesn't contain enough information, say so clearly
+- Be precise and analytical — this is for PFM specialists, fiscal authorities, and policy researchers`
+        : `You are a public investment management expert assistant. Answer the user's question based ONLY on the provided context from ${col.label}. Always cite your sources using [Source N] notation. If the context doesn't contain enough information, say so clearly.`;
 
     const userMessage = `Context:\n${context}\n\n---\n\nQuestion: ${query}`;
 
