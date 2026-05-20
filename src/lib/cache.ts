@@ -23,7 +23,7 @@ export async function getCachedEmbedding(
     .from("embedding_cache")
     .select("embedding, created_at")
     .eq("query_hash", hash)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
 
@@ -31,10 +31,9 @@ export async function getCachedEmbedding(
   const age = Date.now() - new Date(data.created_at).getTime();
   if (age > EMBEDDING_TTL_MS) return null;
 
-  // Increment hit count (fire and forget)
-  void supabase.rpc("exec_sql", {
-    query: `UPDATE embedding_cache SET hit_count = hit_count + 1 WHERE query_hash = '${hash}'`,
-  });
+  // Increment hit count (fire and forget). Typed RPC — parameterized,
+  // safe, no string interpolation. Defined in migration 011.
+  void supabase.rpc("increment_embedding_cache_hit", { p_hash: hash });
 
   // Parse the embedding - pgvector returns it as a string "[0.1,0.2,...]"
   const embedding = typeof data.embedding === "string"
@@ -95,7 +94,7 @@ export async function getCachedResponse(
     .from("response_cache")
     .select("answer, sources, provider, input_tokens, output_tokens, created_at")
     .eq("cache_key", cacheKey)
-    .single();
+    .maybeSingle();
 
   if (error || !data) return null;
 
@@ -103,10 +102,9 @@ export async function getCachedResponse(
   const age = Date.now() - new Date(data.created_at).getTime();
   if (age > RESPONSE_TTL_MS) return null;
 
-  // Increment hit count (fire and forget)
-  void supabase.rpc("exec_sql", {
-    query: `UPDATE response_cache SET hit_count = hit_count + 1 WHERE cache_key = '${cacheKey}'`,
-  });
+  // Increment hit count (fire and forget). Typed RPC — parameterized,
+  // safe, no string interpolation. Defined in migration 011.
+  void supabase.rpc("increment_response_cache_hit", { p_key: cacheKey });
 
   return {
     answer: data.answer,

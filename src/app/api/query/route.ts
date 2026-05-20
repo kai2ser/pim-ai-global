@@ -13,6 +13,11 @@ import {
 } from "@/lib/cache";
 import { logQuery, timed } from "@/lib/logger";
 
+// Vercel: cap the function at 60s so streamed RAG calls (chunk retrieval +
+// LLM token stream) don't get killed at the Hobby-tier 10s default.
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const MAX_QUERY_LENGTH = 2000;
 const MAX_CONTEXT_CHARS = 12000;
 
