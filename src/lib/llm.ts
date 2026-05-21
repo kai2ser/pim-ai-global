@@ -2,8 +2,6 @@
  * Multi-LLM Router
  * -----------------
  * Unified interface for generating answers from different LLM providers.
- * Add new providers by extending the switch in generateAnswer() and
- * generateAnswerStream().
  *
  * To add a new provider:
  *   1. Add model entries to src/lib/models.ts (the user-facing dropdown)
@@ -11,45 +9,73 @@
  *   3. Add a new case here for generateAnswer + generateAnswerStream
  *   4. Add the API key env var to env.ts and Vercel
  *
+ * Provider SDKs (Anthropic, OpenAI) are dynamically imported on first use
+ * for the matching provider, so a request that only uses Gemini doesn't pay
+ * the cold-start cost of loading the Anthropic + OpenAI SDKs (~3-4 MB).
+ *
  * Mistral uses OpenAI's SDK against the Mistral API (their REST API is
- * OpenAI-compatible). Gemini uses raw fetch against Google's REST API
- * (Google's SDK adds enough payload that fetch is the smaller dependency).
+ * OpenAI-compatible). Gemini uses raw fetch.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
+import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
+
+// ── Cached dynamic imports ──────────────────────────────────────────────
+
+let _anthropicMod: Promise<typeof import("@anthropic-ai/sdk")> | null = null;
+function loadAnthropic() {
+  if (!_anthropicMod) _anthropicMod = import("@anthropic-ai/sdk");
+  return _anthropicMod;
+}
+
+let _openaiMod: Promise<typeof import("openai")> | null = null;
+function loadOpenAI() {
+  if (!_openaiMod) _openaiMod = import("openai");
+  return _openaiMod;
+}
 
 // ── Error helpers ──────────────────────────────────────────────────────
 
+/**
+ * Convert raw provider API errors into a small set of user-safe messages.
+ *
+ * Returns an allowlisted phrase only when we recognise the error class.
+ * Anything else falls through to a generic phrase — we never echo raw
+ * provider error bodies back to the browser, since they can contain
+ * billing/account hints, internal IDs, or stack traces.
+ */
 export function friendlyError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.toLowerCase();
 
-  if (msg.includes("overloaded") || msg.includes("Overloaded")) {
+  if (m.includes("overloaded")) {
     return "The AI model is temporarily overloaded. Please try again in a few seconds, or switch to a different model.";
   }
-  if (msg.includes("rate_limit") || msg.includes("rate limit") || msg.includes("429")) {
+  if (m.includes("rate_limit") || m.includes("rate limit") || m.includes("429")) {
     return "API rate limit reached. Please wait a moment and try again.";
   }
-  if (msg.includes("authentication") || msg.includes("401") || msg.includes("invalid x-api-key") || msg.includes("API_KEY_INVALID")) {
+  if (m.includes("authentication") || m.includes("401") || m.includes("invalid x-api-key") || m.includes("api_key_invalid")) {
     return "API authentication error. Please contact the administrator.";
   }
-  if (msg.includes("insufficient_quota") || msg.includes("billing")) {
+  if (m.includes("insufficient_quota") || m.includes("billing") || m.includes("payment")) {
     return "API quota exceeded. Please contact the administrator.";
   }
-  if (msg.includes("context_length") || msg.includes("maximum context")) {
+  if (m.includes("context_length") || m.includes("maximum context")) {
     return "The query and context are too long for this model. Try a shorter question or a different model.";
   }
-  if (msg.includes("timeout") || msg.includes("ETIMEDOUT") || msg.includes("ECONNRESET")) {
+  if (m.includes("timeout") || m.includes("etimedout") || m.includes("econnreset") || m.includes("eai_again")) {
     return "The request timed out. Please try again.";
   }
-  if (msg.includes("no longer available") || msg.includes("deprecated")) {
+  if (m.includes("no longer available") || m.includes("deprecated")) {
     return "This model has been deprecated. Please pick a different model.";
   }
-
-  if (msg.startsWith("{") || msg.includes("stack") || msg.length > 200) {
-    return "An unexpected error occurred with the AI model. Please try again or switch to a different model.";
+  if (m.includes("content_filter") || m.includes("safety")) {
+    return "The provider declined to answer due to its content policy. Try rephrasing the question.";
   }
-  return msg;
+
+  // Catch-all: never leak the raw provider message — could contain
+  // billing/account hints, stack traces, or internal IDs.
+  return "An unexpected error occurred with the AI model. Please try again or switch to a different model.";
 }
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -84,8 +110,19 @@ const MODEL_MAP: Record<string, MapEntry> = {
 
 // Mistral REST API is OpenAI-compatible. Reuse the OpenAI SDK with a
 // custom baseURL — avoids another dependency.
-function mistralClient(apiKey: string) {
-  return new OpenAI({ apiKey, baseURL: "https://api.mistral.ai/v1" });
+async function mistralClient(apiKey: string): Promise<OpenAI> {
+  const { default: OpenAICtor } = await loadOpenAI();
+  return new OpenAICtor({ apiKey, baseURL: "https://api.mistral.ai/v1" });
+}
+
+async function anthropicClient(apiKey: string): Promise<Anthropic> {
+  const { default: AnthropicCtor } = await loadAnthropic();
+  return new AnthropicCtor({ apiKey });
+}
+
+async function openAIClient(apiKey: string): Promise<OpenAI> {
+  const { default: OpenAICtor } = await loadOpenAI();
+  return new OpenAICtor({ apiKey });
 }
 
 // Provider-id-to-display-label
@@ -117,7 +154,8 @@ export async function generateAnswer(
     const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
-    const message = await new Anthropic({ apiKey }).messages.create({
+    const client = await anthropicClient(apiKey);
+    const message = await client.messages.create({
       model: entry.modelId,
       max_tokens: maxTokens,
       system: systemPrompt,
@@ -140,7 +178,8 @@ export async function generateAnswer(
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-    const response = await new OpenAI({ apiKey }).chat.completions.create({
+    const client = await openAIClient(apiKey);
+    const response = await client.chat.completions.create({
       model: entry.modelId,
       max_completion_tokens: maxTokens,
       messages: [
@@ -164,7 +203,8 @@ export async function generateAnswer(
     const apiKey = process.env.MISTRAL_API_KEY;
     if (!apiKey) throw new Error("Missing MISTRAL_API_KEY");
 
-    const response = await mistralClient(apiKey).chat.completions.create({
+    const client = await mistralClient(apiKey);
+    const response = await client.chat.completions.create({
       model: entry.modelId,
       max_tokens: maxTokens,
       messages: [
@@ -246,7 +286,8 @@ export async function* generateAnswerStream(
     const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
-    const stream = new Anthropic({ apiKey }).messages.stream({
+    const client = await anthropicClient(apiKey);
+    const stream = client.messages.stream({
       model: entry.modelId,
       max_tokens: maxTokens,
       system: systemPrompt,
@@ -276,7 +317,8 @@ export async function* generateAnswerStream(
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-    const stream = await new OpenAI({ apiKey }).chat.completions.create({
+    const client = await openAIClient(apiKey);
+    const stream = await client.chat.completions.create({
       model: entry.modelId,
       max_completion_tokens: maxTokens,
       stream: true,
@@ -313,7 +355,8 @@ export async function* generateAnswerStream(
     const apiKey = process.env.MISTRAL_API_KEY;
     if (!apiKey) throw new Error("Missing MISTRAL_API_KEY");
 
-    const stream = await mistralClient(apiKey).chat.completions.create({
+    const client = await mistralClient(apiKey);
+    const stream = await client.chat.completions.create({
       model: entry.modelId,
       max_tokens: maxTokens,
       stream: true,

@@ -1,11 +1,18 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getServerEnv } from "@/lib/env";
 
 // Server client (uses service role key — never expose to browser).
 // All DB operations go through this client via API routes.
-export function getServiceClient() {
+//
+// Cached at module level so we don't allocate a fresh client per request.
+// Safe because the supabase-js client doesn't hold per-request state and is
+// fully concurrent.
+let _serviceClient: SupabaseClient | null = null;
+export function getServiceClient(): SupabaseClient {
+  if (_serviceClient) return _serviceClient;
   const env = getServerEnv();
-  return createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  _serviceClient = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  return _serviceClient;
 }
 
 export type CollectionName =
