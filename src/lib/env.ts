@@ -40,6 +40,12 @@ const serverEnvSchema = z.object({
   // Admin token for /api/admin/* and /api/cron/* routes.
   // Generate with: openssl rand -hex 32
   ADMIN_TOKEN: z.string().optional().default(""),
+
+  // Salt for the IP-hash in query_logs. Without this the IP hash is
+  // SHA-256(raw IP) — easily reversed via a 4-billion-row rainbow table.
+  // With it, the IP becomes HMAC-SHA-256(IP, salt) — practically unrecoverable.
+  // Generate with: openssl rand -hex 32
+  IP_HASH_SALT: z.string().optional().default(""),
 });
 
 // Validate once and cache

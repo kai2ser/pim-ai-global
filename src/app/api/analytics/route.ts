@@ -1,9 +1,58 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase";
+import { getServerEnv } from "@/lib/env";
 
+export const runtime = "nodejs";
+
+// Cached for 60s when the caller is admin. Public callers are 403'd before
+// they reach the cache, so this revalidate hint doesn't affect access control.
 export const revalidate = 60;
 
-export async function GET() {
+/**
+ * Admin gate: requires `Authorization: Bearer <ADMIN_TOKEN>` header.
+ * Constant-time compare to defend against timing side-channels.
+ *
+ * If ADMIN_TOKEN is unset (dev / new deployment), the endpoint refuses all
+ * callers — this is safer than the previous unauthenticated default which
+ * leaked the last 50 raw user queries.
+ */
+function isAdmin(req: NextRequest): boolean {
+  const expected = getServerEnv().ADMIN_TOKEN;
+  if (!expected) return false;
+
+  const header = req.headers.get("authorization") || "";
+  const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (presented.length !== expected.length) return false;
+
+  // Constant-time comparison (avoids leaking length-prefix matches via timing).
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ presented.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Truncate raw query text for display. Even admins shouldn't habitually
+ * read full queries from logs — the table is the source of truth if a
+ * targeted lookup is needed.
+ */
+function redactQuery(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.length > 80 ? s.slice(0, 80) + "…" : s;
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAdmin(req)) {
+    return NextResponse.json(
+      { error: "Forbidden" },
+      {
+        status: 403,
+        headers: { "X-Robots-Tag": "noindex, nofollow" },
+      }
+    );
+  }
+
   try {
     const supabase = getServiceClient();
 
@@ -31,11 +80,15 @@ export async function GET() {
       ]);
 
     // Compute summary from the recent logs
-    const logs = recentLogs.data ?? [];
-    const last24h = logs.filter(
+    const rawLogs = recentLogs.data ?? [];
+    const last24h = rawLogs.filter(
       (l) =>
         new Date(l.created_at).getTime() > Date.now() - 24 * 60 * 60 * 1000
     );
+
+    // Redact query_text in the response — even admins see only the first
+    // 80 chars. Full text remains in the DB for targeted SQL lookups.
+    const logs = rawLogs.map((l) => ({ ...l, query_text: redactQuery(l.query_text) }));
 
     const summary = {
       total_queries: last24h.length,
@@ -85,7 +138,8 @@ export async function GET() {
       {
         headers: {
           "Cache-Control":
-            "public, s-maxage=60, stale-while-revalidate=300",
+            "private, s-maxage=60, stale-while-revalidate=300",
+          "X-Robots-Tag": "noindex, nofollow",
         },
       }
     );

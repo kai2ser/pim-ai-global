@@ -7,9 +7,14 @@ function sha256(text: string): string {
   return crypto.createHash("sha256").update(text.toLowerCase().trim()).digest("hex");
 }
 
-// Cache TTL: 24 hours for responses, 30 days for embeddings
-const RESPONSE_TTL_MS = 24 * 60 * 60 * 1000;
-const EMBEDDING_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Cache TTLs. The response cache is keyed by normalized query (lower-cased)
+// across all users, so a poisoned/policy-violating answer would persist for
+// the TTL. Keep it short — 1 hour is a good balance of perf benefit (most
+// repeat queries are within minutes) and reduced blast radius. Embeddings
+// can keep their 30-day TTL because they're objective and not user-facing
+// answer content.
+const RESPONSE_TTL_MS = 60 * 60 * 1000;          // 1 hour
+const EMBEDDING_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // ── Embedding Cache ─────────────────────────────────────────────────────
 

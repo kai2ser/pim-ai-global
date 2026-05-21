@@ -54,16 +54,32 @@ interface AnalyticsData {
   cache: CacheStats;
 }
 
+// /api/analytics is admin-gated (Bearer ADMIN_TOKEN). The token is held in
+// sessionStorage so it clears on tab close. We never persist to localStorage
+// (lower-risk than a long-lived stored secret on a shared machine).
+const TOKEN_KEY = "pim_admin_token";
+
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
 
   const fetchAnalytics = async () => {
     setLoading(true);
     setError("");
+    setNeedsAuth(false);
     try {
-      const res = await fetch("/api/analytics");
+      const token =
+        typeof window !== "undefined" ? sessionStorage.getItem(TOKEN_KEY) : null;
+      const res = await fetch("/api/analytics", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 403) {
+        setNeedsAuth(true);
+        return;
+      }
       if (!res.ok) {
         setError(`Server error: ${res.status}`);
         return;
@@ -78,9 +94,43 @@ export default function AnalyticsPage() {
     }
   };
 
+  const submitToken = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInput) return;
+    sessionStorage.setItem(TOKEN_KEY, tokenInput);
+    setTokenInput("");
+    fetchAnalytics();
+  };
+
   useEffect(() => {
     fetchAnalytics();
   }, []);
+
+  if (needsAuth) {
+    return (
+      <div className="mx-auto max-w-md px-6 py-24">
+        <h1 className="font-heading text-2xl font-bold text-[#1d212b]">
+          Admin token required
+        </h1>
+        <p className="mt-3 text-sm text-[#778899]">
+          /analytics shows raw query logs and is restricted to operators.
+          Paste your <code>ADMIN_TOKEN</code> to continue. It will be kept in
+          this tab&apos;s session storage only.
+        </p>
+        <form onSubmit={submitToken} className="mt-6 space-y-3">
+          <input
+            type="password"
+            autoFocus
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            placeholder="ADMIN_TOKEN"
+            className="w-full rounded-md border border-[#d9dce0] px-3 py-2 text-sm focus:border-[#4472c4] focus:outline-none"
+          />
+          <Button type="submit" disabled={!tokenInput}>Unlock</Button>
+        </form>
+      </div>
+    );
+  }
 
   const s = data?.summary_24h;
   const c = data?.cache;
