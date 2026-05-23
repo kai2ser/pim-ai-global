@@ -41,6 +41,11 @@ const serverEnvSchema = z.object({
   // Generate with: openssl rand -hex 32
   ADMIN_TOKEN: z.string().optional().default(""),
 
+  // Vercel Cron secret. Vercel auto-injects a `CRON_SECRET` env var and sends
+  // it as `Authorization: Bearer ${CRON_SECRET}` when invoking scheduled
+  // routes. Setting this on the project lets cron paths verify the caller.
+  CRON_SECRET: z.string().optional().default(""),
+
   // Salt for the IP-hash in query_logs. Without this the IP hash is
   // SHA-256(raw IP) — easily reversed via a 4-billion-row rainbow table.
   // With it, the IP becomes HMAC-SHA-256(IP, salt) — practically unrecoverable.
