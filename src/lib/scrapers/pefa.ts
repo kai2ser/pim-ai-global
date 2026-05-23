@@ -239,13 +239,62 @@ export const pefaScraper: Scraper = {
       }
     }
 
+    // Dedupe national assessments by (country, year).
+    //
+    // pefa.org sometimes publishes multiple node entries for the same
+    // national assessment (drafts, methodology updates, re-issues), all
+    // labelled "National" with the same (country, year). Their non-
+    // -national counterparts include the node id in the filename to
+    // disambiguate, but national filenames intentionally don't — so they
+    // can dedupe against the CSV-seeded "PEFA <year> <country>.pdf"
+    // catalogue. The trade-off is that two scraper rows for the same
+    // national bucket would collide via the (collection_id, filepath)
+    // unique key and abort the orchestrator's upsert.
+    //
+    // Tiebreaker: keep the one with status='Final' (most authoritative);
+    // on a tie, the highest node id (assumed to be the most recently
+    // published edition on pefa.org). Drop the rest — they're rare and
+    // semantically near-identical to the winner.
+    const finalDocuments: ScrapedDocument[] = [];
+    let nationalDropped = 0;
+    const nationalByKey = new Map<string, ScrapedDocument>();
+    for (const d of documents) {
+      if (d.tags.category !== "national") {
+        finalDocuments.push(d);
+        continue;
+      }
+      const key = `${d.country ?? "?"}|${d.year ?? "?"}`;
+      const existing = nationalByKey.get(key);
+      if (!existing) {
+        nationalByKey.set(key, d);
+        continue;
+      }
+      const score = (doc: ScrapedDocument): number => {
+        const statusStr = String(doc.metadata.status ?? "").toLowerCase();
+        const isFinal = statusStr === "final" ? 1 : 0;
+        const nodeId = Number(doc.metadata.node_id ?? 0);
+        // Pack into a single comparable number: Final wins by a huge margin,
+        // then higher node_id wins.
+        return isFinal * 1e9 + nodeId;
+      };
+      if (score(d) > score(existing)) {
+        nationalByKey.set(key, d);
+      }
+      nationalDropped++;
+    }
+    for (const d of nationalByKey.values()) finalDocuments.push(d);
+
     return {
       scraper: "pefa",
       collection: "pefa_reports",
-      status: documents.length === 0 ? (lastError ? "error" : "stub") : status,
-      documents,
+      status: finalDocuments.length === 0 ? (lastError ? "error" : "stub") : status,
+      documents: finalDocuments,
       errorMessage: lastError,
-      metadata: { pages_visited: pagesVisited, source: PEFA_LIST_URL },
+      metadata: {
+        pages_visited: pagesVisited,
+        source: PEFA_LIST_URL,
+        national_duplicates_dropped: nationalDropped,
+      },
     };
   },
 };

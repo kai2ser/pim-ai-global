@@ -31,8 +31,12 @@ import { getEmbeddings } from "@/lib/embeddings";
 
 const USER_AGENT =
   "pim-ai-global-bot/1.0 (research; +https://pim-ai-global.vercel.app)";
-const MAX_PDF_BYTES = 50 * 1024 * 1024;       // 50 MB
-const DOWNLOAD_TIMEOUT_MS = 45_000;
+// 100 MB — sized for the largest legitimate PERs we've seen in the wild
+// (Namibia 2025 is 68 MB). pdf-parse holds the whole document in memory at
+// ~4× expansion; on Vercel Pro's 1024 MB function we still have plenty of
+// headroom for embeddings + working memory.
+const MAX_PDF_BYTES = 100 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
 const CHUNK_SIZE_CHARS = 3000;
 const CHUNK_OVERLAP_CHARS = 500;
 const EMBED_BATCH = 32;
@@ -294,7 +298,10 @@ async function embedAndInsert(
       document_id: docId,
       chunk_index: c.chunkIndex,
       content: c.content,
-      token_count: Math.ceil(c.content.length / 4), // rough; ~4 chars/token
+      // NB: only pefa_reports has token_count + section_heading columns in the
+      // chunk-table schema. pim_literature / pima_reports / wbg_pers don't.
+      // Sticking to the columns all four tables share keeps a single insert
+      // shape across collections without needing per-collection branches.
       page_number: c.pageNumber,
       // halfvec(3072) accepts a JSON array literal of floats.
       embedding: embeddings[j],
