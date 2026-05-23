@@ -13,7 +13,8 @@ import { isAdmin } from "@/lib/admin-auth";
 import { refreshRegistry } from "@/lib/scrapers";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Same scraper budget as the cron route — see comment there.
+export const maxDuration = 180;
 
 export async function POST(req: NextRequest) {
   if (!isAdmin(req)) {

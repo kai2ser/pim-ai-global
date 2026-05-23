@@ -16,9 +16,13 @@ import { isCronOrAdmin } from "@/lib/admin-auth";
 import { refreshRegistry } from "@/lib/scrapers";
 
 export const runtime = "nodejs";
-// Scrapers can hit pefa.org's ~50 listing pages with 250ms delays between
-// them — comfortably under 60s, but bump from the 10s default.
-export const maxDuration = 60;
+// All three scrapers run in sequence:
+//   PEFA: ~45 list pages × 250ms ≈ 12s
+//   PIMA: 1 index + ~113 country pages × 250ms ≈ 30s + parse overhead
+//   WBG:  ~2 OKR API pages ≈ 1s
+// Total around 50–90s with HTML parse + DB upsert. Vercel Pro permits up to
+// 300; pad to 180 so the cron doesn't fail on an upstream slowdown.
+export const maxDuration = 180;
 
 export async function GET(req: NextRequest) {
   if (!isCronOrAdmin(req)) {
