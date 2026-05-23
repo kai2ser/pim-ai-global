@@ -1,38 +1,44 @@
 /**
- * PEFA Secretariat scraper — fetches the full assessments catalogue from
- * pefa.org/assessments and normalises each row into a ScrapedDocument.
+ * PEFA Secretariat scraper.
  *
- * The PEFA Secretariat publishes an HTML listing of assessments with
- * inline metadata (country, year, level, status, availability). Each
- * assessment row carries a node-id link to its detail page.
+ * pefa.org publishes its assessments index as a Drupal Views table at
+ * /assessments/list, paginated via ?page=N. Each row is a <tr> with:
+ *   - <a href="/node/<id>">Country Year</a>            (Title cell)
+ *   - <td class="…views-field-field-assessment-type">…<div class="label">Type</div>National</td>
+ *   - <td class="…views-field-field-country">…Country</td>
+ *   - <td class="…views-field-field-assessment-status">…Final / Draft / …</td>
+ *   - <td class="…views-field-field-assessment-availability">…Public / Non-public</td>
  *
- * Our existing 148 catalogued PEFA reports came from a hand-curated CSV
- * (`latest_national_pefas.csv`). This scraper expands the registry to the
- * full ~1800 historical PEFA assessments (per the xlsx the user shared
- * on day 1) including National, Subnational, Climate, and Gender variants.
+ * Each call paginates from page=0 until a fetched page returns zero new
+ * assessment rows. Respects upstream: ~250ms between pages, identifies as a
+ * research crawler in User-Agent. Returns up to ~900 assessments total
+ * (currently 45 pages × ~20 rows each).
  *
- * Notes on robustness:
- *   - pefa.org changes its DOM occasionally. The selectors below are
- *     deliberately loose (look for anchor tags with /node/<id>, parse
- *     surrounding card text). When pefa.org changes layout, the scraper
- *     degrades to status='partial' or 'error' rather than crashing.
- *   - Respect upstream: paginate sequentially with a 250ms delay between
- *     pages, identify as a research crawler in User-Agent.
- *   - Run as part of monthly cron only — not on every request.
+ * Earlier version of this scraper targeted /assessments (the landing page)
+ * with a regex that only matched relative-path node hrefs. The landing page
+ * doesn't contain the assessment table at all, and pefa.org actually uses
+ * absolute URLs for table links — net result was 0 docs. This rewrite uses
+ * the right URL + row-based parser + absolute-or-relative href tolerance.
  */
 
 import type { Scraper, ScraperOptions, ScraperResult, ScrapedDocument } from "./types";
 
 const PEFA_BASE = "https://www.pefa.org";
-const PEFA_LIST_URL = `${PEFA_BASE}/assessments`;
+const PEFA_LIST_URL = `${PEFA_BASE}/assessments/list`;
 const USER_AGENT =
   "pim-ai-global-bot/1.0 (research; +https://pim-ai-global.vercel.app)";
 const PAGE_DELAY_MS = 250;
-const MAX_PAGES = 60; // pefa.org has ~50 pages of assessments
+const MAX_PAGES = 60; // pefa.org currently has 45 pages; cap defensively
 
-interface RawRow {
-  nodeUrl: string;          // https://www.pefa.org/node/<id>
-  rowText: string;          // full text content of the card/row
+interface ParsedRow {
+  nodeUrl: string;       // https://www.pefa.org/node/<id>
+  nodeId: string;
+  title: string;         // "Country Year"
+  country: string | null;
+  year: number | null;
+  type: string | null;   // National / Subnational / Climate / Gender
+  status: string | null; // Final / Draft / ...
+  availability: string | null; // Public / Non-public
 }
 
 function delay(ms: number): Promise<void> {
@@ -40,13 +46,45 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Pull the listing page; extract every node-id link + its surrounding text.
- *
- * Approach: find all `<a href="/node/NNNN"…>` matches, then for each take
- * a ~500-char window of text around the anchor as the "row text". The
- * extractor below then derives country, year, level, status from that text.
+ * Capture text from a Drupal Views td cell. The HTML shape is:
+ *   <td class="…views-field-field-<name>">
+ *     <div class="label">Label</div>
+ *     Value
+ *   </td>
+ * We skip past the label div and capture the next stretch of plain text.
  */
-async function fetchListPage(pageNum: number): Promise<RawRow[]> {
+function readCell(row: string, fieldName: string): string | null {
+  const re = new RegExp(
+    `views-field-field-${fieldName}[^>]*>[\\s\\S]*?</div>([^<]+)`,
+    "i"
+  );
+  const m = row.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function parseRow(row: string): ParsedRow | null {
+  // Title cell: <a href="(absolute or /node/N)">Country Year</a>
+  const linkMatch = row.match(
+    /href="(?:https?:\/\/[^/]+)?(\/node\/(\d+))"[^>]*>([^<]+)<\/a>/i
+  );
+  if (!linkMatch) return null;
+  const nodeUrl = `${PEFA_BASE}${linkMatch[1]}`;
+  const nodeId = linkMatch[2];
+  const title = linkMatch[3].trim();
+
+  const country = readCell(row, "country");
+  if (!country) return null; // sidebar / non-table anchors
+
+  const type = readCell(row, "assessment-type");
+  const status = readCell(row, "assessment-status");
+  const availability = readCell(row, "assessment-availability");
+  const yearM = title.match(/\b(19|20)\d{2}\b/);
+  const year = yearM ? parseInt(yearM[0], 10) : null;
+
+  return { nodeUrl, nodeId, title, country, year, type, status, availability };
+}
+
+async function fetchListPage(pageNum: number): Promise<ParsedRow[]> {
   const url = pageNum === 0 ? PEFA_LIST_URL : `${PEFA_LIST_URL}?page=${pageNum}`;
   const res = await fetch(url, {
     headers: { "user-agent": USER_AGENT, accept: "text/html" },
@@ -55,103 +93,59 @@ async function fetchListPage(pageNum: number): Promise<RawRow[]> {
     throw new Error(`pefa.org page ${pageNum}: ${res.status} ${res.statusText}`);
   }
   const html = await res.text();
-
-  // Build a lookup of every assessment-node link + its surrounding 500 chars.
-  const re = /<a[^>]+href="(\/node\/(\d+))"[^>]*>([^<]*)<\/a>/gi;
-  const rows: RawRow[] = [];
+  // Split on <tr>; each chunk is a single row's HTML.
+  const chunks = html.split(/<tr\b[^>]*>/i);
+  const rows: ParsedRow[] = [];
   const seen = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const nodeUrl = `${PEFA_BASE}${m[1]}`;
-    if (seen.has(nodeUrl)) continue;
-    seen.add(nodeUrl);
-    const idx = m.index;
-    const start = Math.max(0, idx - 200);
-    const end = Math.min(html.length, idx + 500);
-    // Strip HTML tags from the window so the row text is plain.
-    const rowText = html.slice(start, end).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    rows.push({ nodeUrl, rowText });
+  for (const chunk of chunks) {
+    const row = parseRow(chunk);
+    if (!row) continue;
+    if (seen.has(row.nodeId)) continue;
+    seen.add(row.nodeId);
+    rows.push(row);
   }
   return rows;
 }
 
-function parseYear(text: string): number | null {
-  const m = text.match(/\b(19|20)\d{2}\b/);
-  return m ? parseInt(m[0], 10) : null;
-}
+function rowToDocument(row: ParsedRow): ScrapedDocument {
+  const typeNormalized = (row.type || "national").toLowerCase();
+  let category: "national" | "subnational" | "climate" | "gender" = "national";
+  if (typeNormalized.includes("subnational")) category = "subnational";
+  else if (typeNormalized.includes("climate")) category = "climate";
+  else if (typeNormalized.includes("gender")) category = "gender";
 
-/** Best-effort country extraction from row text. */
-function parseCountry(text: string): string | null {
-  // pefa.org rows tend to look like: "Albania - 2025 - National - Final - Public"
-  // The country is usually the first segment before " - " or " — ".
-  const seg = text.split(/\s+[-—]\s+/)[0].trim();
-  // Sanity-check: country names are 2-50 chars, mostly letters/spaces/dots.
-  if (seg.length < 2 || seg.length > 50) return null;
-  if (!/^[A-Za-z][A-Za-z ,.()&'\-]+$/.test(seg)) return null;
-  return seg;
-}
+  const availability =
+    row.availability && /non[- ]public/i.test(row.availability)
+      ? "Non-public"
+      : "Public";
 
-function parseCategory(
-  text: string
-): "national" | "subnational" | "climate" | "gender" {
-  const t = text.toLowerCase();
-  if (t.includes("climate")) return "climate";
-  if (t.includes("gender")) return "gender";
-  if (t.includes("subnational")) return "subnational";
-  return "national";
-}
-
-function parseAvailability(text: string): "Public" | "Non-public" {
-  return /non[- ]public/i.test(text) ? "Non-public" : "Public";
-}
-
-function parseStatus(text: string): string | null {
-  const m = text.match(/\b(Final|Draft|Concept|Planned)\b/i);
-  return m ? m[1] : null;
-}
-
-function rowToDocument(raw: RawRow): ScrapedDocument | null {
-  const country = parseCountry(raw.rowText);
-  const year = parseYear(raw.rowText);
-  const category = parseCategory(raw.rowText);
-  const availability = parseAvailability(raw.rowText);
-  const status = parseStatus(raw.rowText);
-
-  if (!country) return null; // can't index without a country
-
-  // Suggested filename mirrors the convention from the CSV-seeded rows so the
-  // (collection_id, filepath) UNIQUE constraint dedupes against the existing
-  // 148 catalogued PEFA reports.
-  const categoryLabel =
+  const categoryPrefix =
     category === "national" ? "" :
     category === "subnational" ? "Subnational " :
     category === "climate" ? "Climate " :
     "Gender ";
-  const yearLabel = year ?? "Undated";
-  const filename = `PEFA ${categoryLabel}${yearLabel} ${country}.pdf`;
-  const title = `${country} ${yearLabel} ${categoryLabel || "National "}PEFA`.trim();
-
-  const nodeId = raw.nodeUrl.match(/\/node\/(\d+)/)?.[1] ?? "";
+  const yearLabel = row.year ?? "Undated";
+  const filename = `PEFA ${categoryPrefix}${yearLabel} ${row.country}.pdf`;
 
   return {
-    sourceUrl: raw.nodeUrl,
+    sourceUrl: row.nodeUrl,
     filename,
-    title,
-    country,
-    year,
+    title: row.title,
+    country: row.country,
+    year: row.year,
     tags: {
       category,
       availability,
       is_public: availability === "Public",
     },
     metadata: {
-      status,
+      status: row.status,
       availability,
       is_public: availability === "Public",
-      node_id: nodeId,
-      page_url: raw.nodeUrl,
+      node_id: row.nodeId,
+      page_url: row.nodeUrl,
       scraper: "pefa",
-      raw_row: raw.rowText.slice(0, 240),
+      raw_title: row.title,
     },
   };
 }
@@ -162,7 +156,6 @@ export const pefaScraper: Scraper = {
 
   async run(opts: ScraperOptions): Promise<ScraperResult> {
     if (opts.smokeTest) {
-      // Deterministic smoke output — useful for dry-run testing.
       return {
         scraper: "pefa",
         collection: "pefa_reports",
@@ -171,7 +164,7 @@ export const pefaScraper: Scraper = {
           {
             sourceUrl: "https://www.pefa.org/node/0",
             filename: "PEFA 2099 SmokeTest.pdf",
-            title: "SmokeTest 2099 PEFA",
+            title: "SmokeTest 2099",
             country: "SmokeTest",
             year: 2099,
             tags: { category: "national", availability: "Public", is_public: true },
@@ -183,35 +176,33 @@ export const pefaScraper: Scraper = {
     }
 
     const documents: ScrapedDocument[] = [];
-    const pagesVisited: string[] = [];
+    const seenIds = new Set<string>();
+    let pagesVisited = 0;
     let lastError: string | undefined;
     let status: ScraperResult["status"] = "ok";
 
     for (let page = 0; page < MAX_PAGES; page++) {
       try {
         const rows = await fetchListPage(page);
-        pagesVisited.push(`page=${page}`);
+        pagesVisited++;
 
-        // pefa.org pagination ends silently — when we get no new node IDs on a
-        // page, stop scraping.
+        // Drupal Views serves "empty" pages past the last one. If we got no
+        // rows or no new node ids, stop.
         if (rows.length === 0) break;
-        const sizeBefore = documents.length;
+        const before = documents.length;
         for (const r of rows) {
-          const doc = rowToDocument(r);
-          if (doc) documents.push(doc);
+          if (seenIds.has(r.nodeId)) continue;
+          seenIds.add(r.nodeId);
+          documents.push(rowToDocument(r));
           if (opts.maxItems && documents.length >= opts.maxItems) break;
         }
-        if (documents.length === sizeBefore) {
-          // No new docs found on this page — likely past the last page.
-          break;
-        }
+        if (documents.length === before) break; // no new IDs => past last page
         if (opts.maxItems && documents.length >= opts.maxItems) break;
 
         await delay(PAGE_DELAY_MS);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
         status = "partial";
-        // Don't crash — return whatever we got. Operator can re-run.
         break;
       }
     }
@@ -222,7 +213,7 @@ export const pefaScraper: Scraper = {
       status: documents.length === 0 ? (lastError ? "error" : "stub") : status,
       documents,
       errorMessage: lastError,
-      metadata: { pages_visited: pagesVisited.length, source: PEFA_LIST_URL },
+      metadata: { pages_visited: pagesVisited, source: PEFA_LIST_URL },
     };
   },
 };
