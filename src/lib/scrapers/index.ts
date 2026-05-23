@@ -61,6 +61,19 @@ async function upsertBatch(
 ): Promise<number> {
   if (docs.length === 0) return 0;
 
+  // Defense-in-depth dedupe: keep at most one doc per filename in the batch.
+  // Postgres's ON CONFLICT … DO UPDATE can't touch the same row twice in one
+  // statement, so a scraper that emits two docs with identical filenames
+  // aborts the whole upsert. Individual scrapers do their own dedupe (see
+  // pefa.ts's national-by-(country,year) collapse), but this guard catches
+  // any future regression cheaply — first occurrence wins.
+  const seenFilenames = new Set<string>();
+  docs = docs.filter((d) => {
+    if (seenFilenames.has(d.filename)) return false;
+    seenFilenames.add(d.filename);
+    return true;
+  });
+
   // First, find out which docs already exist by checking against the
   // (collection_id, filepath) unique key. We use the canonical filename
   // (e.g. "PEFA 2026 Cabo Verde.pdf") as filepath so scraper-added rows
