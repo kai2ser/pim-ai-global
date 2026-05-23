@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
     const collection = typeof body.collection === "string" ? body.collection : "";
     const modelId = typeof body.model === "string" ? body.model : undefined;
     const streamMode = body.stream === true;
+    const latestOnly = body.latest_only === true;
 
     if (!query || !collection) {
       return NextResponse.json(
@@ -226,13 +227,31 @@ export async function POST(req: NextRequest) {
     });
 
     // ── 2. Retrieve similar chunks ────────────────────────────────────
+    // If latest_only is set, pre-fetch the document IDs that are the most
+    // recent per (country, category) for this collection from the
+    // documents_latest_per_type view. Every match RPC accepts an optional
+    // document_ids UUID[] filter (added in migration 010), so we just pass
+    // it through. Without the filter, the RPC searches across all chunks.
     const [{ chunks, error }, retrievalMs] = await timed(async () => {
       const supabase = getServiceClient();
-      const { data: chunks, error } = await supabase.rpc(col.matchFn, {
+
+      let documentIds: string[] | undefined;
+      if (latestOnly) {
+        const { data: latestDocs } = await supabase
+          .from("documents_latest_per_type")
+          .select("id")
+          .eq("collection_id", collection);
+        documentIds = (latestDocs ?? []).map((d) => d.id as string);
+      }
+
+      const rpcArgs: Record<string, unknown> = {
         query_embedding: queryEmbedding,
         match_threshold: 0.3,
         match_count: 8,
-      });
+      };
+      if (documentIds) rpcArgs.document_ids = documentIds;
+
+      const { data: chunks, error } = await supabase.rpc(col.matchFn, rpcArgs);
       return { chunks, error };
     });
 

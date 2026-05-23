@@ -51,6 +51,7 @@ function saveHistory(entries: HistoryEntry[]) {
 export default function QueryPage() {
   const [collection, setCollection] = useState<CollectionName>("pim_literature");
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [latestOnly, setLatestOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
@@ -102,7 +103,13 @@ export default function QueryPage() {
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim(), collection, model, stream: true }),
+        body: JSON.stringify({
+          query: query.trim(),
+          collection,
+          model,
+          stream: true,
+          latest_only: latestOnly,
+        }),
       });
 
       if (!res.ok) {
@@ -304,6 +311,21 @@ export default function QueryPage() {
             </p>
           </div>
         </div>
+
+        {/* Scope toggle: latest report per (country, category) only */}
+        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-[#1d212b]">
+          <input
+            type="checkbox"
+            checked={latestOnly}
+            onChange={(e) => setLatestOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-[#dce4f0] text-[#4472c4] focus:ring-[#4472c4]"
+            aria-describedby="latest-only-desc"
+          />
+          <span>Latest reports only</span>
+          <span id="latest-only-desc" className="text-xs text-[#778899]">
+            — restrict retrieval to the most recent report per country and category
+          </span>
+        </label>
 
         {/* Query input */}
         <div>
