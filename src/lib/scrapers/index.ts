@@ -8,9 +8,10 @@
  *   - /api/admin/refresh-registry (manual trigger from /admin)
  *
  * Idempotent against the `documents` UNIQUE (collection_id, filepath)
- * constraint. We use `filepath` as the dedupe key, populated from the
- * scraped sourceUrl (so a re-run of the same scraper updates rather than
- * duplicates rows).
+ * constraint. We use `filepath = filename` as the dedupe key — this matches
+ * the canonical CSV-seeded rows (after migration 014) so the scraper and
+ * the CSV catalogue converge on the same row instead of producing two
+ * records per assessment. The upstream URL is still kept in `source_url`.
  */
 
 import { getServiceClient } from "@/lib/supabase";
@@ -61,9 +62,11 @@ async function upsertBatch(
   if (docs.length === 0) return 0;
 
   // First, find out which docs already exist by checking against the
-  // (collection_id, filepath) unique key. Filepath for scraped docs is the
-  // source URL, which is the most stable upstream identifier.
-  const filepaths = docs.map((d) => d.sourceUrl);
+  // (collection_id, filepath) unique key. We use the canonical filename
+  // (e.g. "PEFA 2026 Cabo Verde.pdf") as filepath so scraper-added rows
+  // collide with the CSV-seeded rows and dedupe naturally. See migration
+  // 014 for the one-time normalization of legacy rows.
+  const filepaths = docs.map((d) => d.filename);
   const { data: existing } = await supabase
     .from("documents")
     .select("filepath")
@@ -74,7 +77,7 @@ async function upsertBatch(
   const rows = docs.map((d) => ({
     collection_id: collection,
     filename: d.filename,
-    filepath: d.sourceUrl,
+    filepath: d.filename,
     title: d.title,
     country: d.country,
     year: d.year,
