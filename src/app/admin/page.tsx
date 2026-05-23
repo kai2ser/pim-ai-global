@@ -9,9 +9,35 @@ import {
   AlertCircle,
   Clock,
   PlayCircle,
+  Download,
 } from "lucide-react";
 
 const TOKEN_KEY = "pim_admin_token";
+
+const COLLECTIONS: Array<{ id: string; label: string }> = [
+  { id: "pefa_reports", label: "PEFA" },
+  { id: "pima_reports", label: "IMF PIMA" },
+  { id: "wbg_pers", label: "World Bank PERs" },
+  { id: "pim_literature", label: "PIM Literature" },
+];
+
+interface CataloguedDoc {
+  id: string;
+  filename: string;
+  country: string | null;
+  year: number | null;
+  source_url: string | null;
+}
+
+interface IngestLogItem {
+  document_id: string;
+  filename: string;
+  status: "pending" | "running" | "ok" | "error";
+  chunk_count?: number;
+  page_count?: number;
+  duration_ms?: number;
+  error?: string;
+}
 
 interface RefreshRun {
   id: number;
@@ -71,6 +97,13 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Ingest panel state
+  const [ingestCollection, setIngestCollection] = useState("pefa_reports");
+  const [ingestBatchSize, setIngestBatchSize] = useState(5);
+  const [ingestTotal, setIngestTotal] = useState<number | null>(null);
+  const [ingestLog, setIngestLog] = useState<IngestLogItem[]>([]);
+  const [ingesting, setIngesting] = useState(false);
+
   const fetchRuns = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -107,6 +140,125 @@ export default function AdminPage() {
     sessionStorage.setItem(TOKEN_KEY, tokenInput);
     setTokenInput("");
     fetchRuns();
+  };
+
+  // Fetch the count of catalogued docs for the selected collection so the
+  // operator sees "ingest 5 of 707 remaining" before they commit.
+  const refreshIngestCount = useCallback(async () => {
+    setIngestTotal(null);
+    try {
+      const token = sessionStorage.getItem(TOKEN_KEY) || "";
+      const res = await fetch(
+        `/api/admin/catalogued?collection=${encodeURIComponent(ingestCollection)}&limit=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return;
+      const j = await res.json();
+      setIngestTotal(typeof j.total_catalogued === "number" ? j.total_catalogued : 0);
+    } catch {
+      /* ignore — count is informational */
+    }
+  }, [ingestCollection]);
+
+  useEffect(() => {
+    if (!needsAuth) refreshIngestCount();
+  }, [needsAuth, refreshIngestCount]);
+
+  const startIngest = async () => {
+    setIngesting(true);
+    setIngestLog([]);
+    setError("");
+    try {
+      const token = sessionStorage.getItem(TOKEN_KEY) || "";
+      // Pull a fresh queue from the catalogued endpoint.
+      const listRes = await fetch(
+        `/api/admin/catalogued?collection=${encodeURIComponent(ingestCollection)}&limit=${ingestBatchSize}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!listRes.ok) {
+        setError(`Failed to load queue: ${listRes.status}`);
+        return;
+      }
+      const j = await listRes.json();
+      const queue: CataloguedDoc[] = j.documents ?? [];
+      if (queue.length === 0) {
+        setError("No catalogued documents to ingest in this collection.");
+        return;
+      }
+      // Seed the log with pending entries so the operator sees the queue.
+      const initialLog: IngestLogItem[] = queue.map((d) => ({
+        document_id: d.id,
+        filename: d.filename,
+        status: "pending",
+      }));
+      setIngestLog(initialLog);
+
+      // Walk the queue one doc at a time. Each /api/admin/ingest call is
+      // bounded by the route's 120s maxDuration; this loop runs purely in
+      // the browser so individual long-running docs don't kill the queue.
+      for (let i = 0; i < queue.length; i++) {
+        const doc = queue[i];
+        setIngestLog((prev) =>
+          prev.map((it, idx) => (idx === i ? { ...it, status: "running" } : it))
+        );
+        const t0 = Date.now();
+        try {
+          const res = await fetch("/api/admin/ingest", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ document_id: doc.id }),
+          });
+          const result = await res.json().catch(() => ({}));
+          if (!res.ok || result.ok === false) {
+            setIngestLog((prev) =>
+              prev.map((it, idx) =>
+                idx === i
+                  ? {
+                      ...it,
+                      status: "error",
+                      error: result.error || `HTTP ${res.status}`,
+                      duration_ms: Date.now() - t0,
+                    }
+                  : it
+              )
+            );
+            continue;
+          }
+          setIngestLog((prev) =>
+            prev.map((it, idx) =>
+              idx === i
+                ? {
+                    ...it,
+                    status: "ok",
+                    chunk_count: result.chunk_count,
+                    page_count: result.page_count,
+                    duration_ms: result.duration_ms ?? Date.now() - t0,
+                  }
+                : it
+            )
+          );
+        } catch (e) {
+          setIngestLog((prev) =>
+            prev.map((it, idx) =>
+              idx === i
+                ? {
+                    ...it,
+                    status: "error",
+                    error: e instanceof Error ? e.message : String(e),
+                    duration_ms: Date.now() - t0,
+                  }
+                : it
+            )
+          );
+        }
+      }
+      refreshIngestCount();
+    } finally {
+      setIngesting(false);
+    }
   };
 
   const triggerRefresh = async () => {
@@ -242,6 +394,120 @@ export default function AdminPage() {
           {error}
         </div>
       )}
+
+      {/* Ingest panel */}
+      <div className="mt-8 rounded-lg border border-[#dce4f0] bg-white p-6 shadow-sm">
+        <h2 className="font-heading text-lg font-semibold text-[#1d212b]">
+          Ingest catalogued documents
+        </h2>
+        <p className="mt-1 text-sm text-[#778899]">
+          Pull the PDF for each catalogued document, chunk it, embed the
+          chunks, and promote the document to <code>embedded</code>. Runs one
+          document at a time client-side so a slow PDF doesn&apos;t kill the
+          batch.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-[#1d212b]">
+            Collection
+            <select
+              value={ingestCollection}
+              onChange={(e) => setIngestCollection(e.target.value)}
+              disabled={ingesting}
+              className="rounded-md border border-[#d9dce0] px-2 py-1 text-sm"
+            >
+              {COLLECTIONS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-[#1d212b]">
+            Batch size
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={ingestBatchSize}
+              onChange={(e) => setIngestBatchSize(Math.max(1, parseInt(e.target.value || "1", 10)))}
+              disabled={ingesting}
+              className="w-16 rounded-md border border-[#d9dce0] px-2 py-1 text-sm"
+            />
+          </label>
+          <div className="text-xs text-[#778899]">
+            {ingestTotal === null
+              ? "Loading queue size…"
+              : ingestTotal === 0
+                ? "Nothing to ingest in this collection."
+                : `${ingestTotal} catalogued docs in queue.`}
+          </div>
+          <Button onClick={startIngest} disabled={ingesting || ingestTotal === 0}>
+            {ingesting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {ingesting
+              ? "Ingesting…"
+              : `Ingest next ${Math.min(ingestBatchSize, ingestTotal ?? ingestBatchSize)}`}
+          </Button>
+        </div>
+
+        {ingestLog.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-md border border-[#dce4f0]">
+            <table className="w-full text-xs">
+              <thead className="border-b border-[#dce4f0] bg-[#f8fafc] text-[#778899]">
+                <tr>
+                  <th className="px-3 py-1.5 text-left font-semibold">Status</th>
+                  <th className="px-3 py-1.5 text-left font-semibold">Document</th>
+                  <th className="px-3 py-1.5 text-right font-semibold">Chunks</th>
+                  <th className="px-3 py-1.5 text-right font-semibold">Pages</th>
+                  <th className="px-3 py-1.5 text-right font-semibold">Duration</th>
+                  <th className="px-3 py-1.5 text-left font-semibold">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ingestLog.map((it) => (
+                  <tr key={it.document_id} className="border-b border-[#f0f5ff] last:border-0">
+                    <td className="px-3 py-1.5">
+                      {it.status === "pending" && (
+                        <span className="text-[#778899]">Queued</span>
+                      )}
+                      {it.status === "running" && (
+                        <span className="inline-flex items-center gap-1 text-[#4472c4]">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Running
+                        </span>
+                      )}
+                      {it.status === "ok" && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700">
+                          <CheckCircle2 className="h-3 w-3" /> Done
+                        </span>
+                      )}
+                      {it.status === "error" && (
+                        <span className="inline-flex items-center gap-1 text-red-700">
+                          <AlertCircle className="h-3 w-3" /> Failed
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-[#1d212b]">{it.filename}</td>
+                    <td className="px-3 py-1.5 text-right text-[#1d212b]">
+                      {it.chunk_count ?? ""}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-[#1d212b]">
+                      {it.page_count ?? ""}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-[#778899]">
+                      {it.duration_ms ? `${(it.duration_ms / 1000).toFixed(1)}s` : ""}
+                    </td>
+                    <td className="px-3 py-1.5 text-red-700">{it.error ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Recent runs */}
       <div className="mt-8">
