@@ -46,6 +46,26 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
+ * Decode the handful of HTML entities Drupal emits into table cells.
+ * pefa.org pages contain things like "Cote d&#039;Ivoire" and "Sao Tome
+ * &amp; Principe" — left raw, those bleed straight into our country/title
+ * columns and the registry UI. We only need the common subset; full entity
+ * decoding would require a DOM parser dep we don't otherwise want here.
+ */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&apos;/g, "'")
+    .replace(/&#0?39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
+/**
  * Capture text from a Drupal Views td cell. The HTML shape is:
  *   <td class="…views-field-field-<name>">
  *     <div class="label">Label</div>
@@ -59,7 +79,7 @@ function readCell(row: string, fieldName: string): string | null {
     "i"
   );
   const m = row.match(re);
-  return m ? m[1].trim() : null;
+  return m ? decodeEntities(m[1].trim()) : null;
 }
 
 function parseRow(row: string): ParsedRow | null {
@@ -70,7 +90,7 @@ function parseRow(row: string): ParsedRow | null {
   if (!linkMatch) return null;
   const nodeUrl = `${PEFA_BASE}${linkMatch[1]}`;
   const nodeId = linkMatch[2];
-  const title = linkMatch[3].trim();
+  const title = decodeEntities(linkMatch[3].trim());
 
   const country = readCell(row, "country");
   if (!country) return null; // sidebar / non-table anchors
@@ -125,7 +145,19 @@ function rowToDocument(row: ParsedRow): ScrapedDocument {
     category === "climate" ? "Climate " :
     "Gender ";
   const yearLabel = row.year ?? "Undated";
-  const filename = `PEFA ${categoryPrefix}${yearLabel} ${row.country}.pdf`;
+  // For national assessments there's exactly one per (country, year), so the
+  // country+year filename matches the legacy CSV catalogue's
+  // "PEFA <year> <country>.pdf" — letting the scraper-side row dedupe against
+  // the CSV-seeded row via the (collection_id, filepath) unique key.
+  //
+  // For sub-national / climate / gender assessments, a single (country, year)
+  // can have many distinct entries (e.g. 12 Tanzanian municipal councils
+  // assessed in 2016). Including the pefa.org node id keeps the filename
+  // unambiguous and stable across re-runs.
+  const filename =
+    category === "national"
+      ? `PEFA ${yearLabel} ${row.country}.pdf`
+      : `PEFA ${categoryPrefix}${yearLabel} ${row.country} (n${row.nodeId}).pdf`;
 
   return {
     sourceUrl: row.nodeUrl,
