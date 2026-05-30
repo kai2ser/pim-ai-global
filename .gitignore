@@ -35,10 +35,12 @@ yarn-error.log*
 
 # scripts (local ingestion only — kept out of the repo because each
 # ingest invocation is a one-off operational task, not source code).
-# Migration and backfill scripts that ship as part of a feature ARE tracked.
+# Migration, backfill, and admin scripts that ship as part of a feature
+# ARE tracked.
 /scripts/*
 !/scripts/migrate/
 !/scripts/backfill/
+!/scripts/admin/
 
 # shell helpers
 start-dev.sh
