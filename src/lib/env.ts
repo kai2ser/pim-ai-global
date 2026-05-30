@@ -51,6 +51,28 @@ const serverEnvSchema = z.object({
   // With it, the IP becomes HMAC-SHA-256(IP, salt) — practically unrecoverable.
   // Generate with: openssl rand -hex 32
   IP_HASH_SALT: z.string().optional().default(""),
+
+  // ── Cron failure alerting (all optional) ───────────────────────────────
+  // refresh-registry skips notification silently when none of these are set.
+  // Configure either channel — or both — to get pinged when a scraper
+  // reports status='error' or 'partial' in a real run.
+
+  // Resend (https://resend.com) email channel. Free tier: 100 emails/day.
+  // Both vars must be set to enable email alerts.
+  RESEND_API_KEY: z.string().optional().default(""),
+  ALERT_EMAIL: z.string().optional().default(""),
+
+  // Generic webhook channel. Posts a JSON body with a `text` field — works
+  // for Slack and Discord incoming webhooks, or any consumer that accepts
+  // `{ text: string }`.
+  ALERT_WEBHOOK_URL: z.string().optional().default(""),
+
+  // Public URL of the deployed app, embedded in alert bodies as the link
+  // back to /admin. Falls back to the production URL.
+  APP_PUBLIC_URL: z
+    .string()
+    .optional()
+    .default("https://pim-ai-global.vercel.app"),
 });
 
 // Validate once and cache
