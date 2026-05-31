@@ -52,7 +52,14 @@ set +a
 
 TS=$(date +%s)
 LOG="/tmp/ingest-${COLLECTION}-${TS}.log"
+# Track every doc_id we've attempted this run (success OR fail). A failed
+# ingest stays in 'catalogued' on the server, so without this dedupe the
+# next catalogued-list page would return the same failures and the loop
+# would spin forever — or trip the early-stop on those repeats alone.
+ATTEMPTED=$(mktemp -t bulk-ingest-attempted.XXXXXX)
+trap 'rm -f "$ATTEMPTED"' EXIT
 echo "Logging to $LOG"
+echo "Attempted-ids tracker: $ATTEMPTED"
 echo "ts=$(date -u +%FT%TZ) collection=$COLLECTION batch=$BATCH_SIZE base=$BASE_URL" > "$LOG"
 
 ok=0
@@ -62,14 +69,30 @@ processed=0
 declare -a recent
 
 # Outer loop: pull a fresh batch until the queue empties (or we early-stop).
+# We over-fetch (4× batch_size, capped at 200) so that after filtering out
+# previously-attempted docs we still have enough headroom to form a full
+# batch. The server-side endpoint paginates by year+country, not by recency,
+# so the same window stays stable enough for this to be deterministic.
+FETCH_LIMIT=$((BATCH_SIZE * 4))
+if [ "$FETCH_LIMIT" -gt 200 ]; then FETCH_LIMIT=200; fi
+
 while true; do
   queue=$(curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" \
-    "$BASE_URL/api/admin/catalogued?collection=$COLLECTION&limit=$BATCH_SIZE")
+    "$BASE_URL/api/admin/catalogued?collection=$COLLECTION&limit=$FETCH_LIMIT")
   total=$(echo "$queue" | python3 -c "import sys,json; print(json.load(sys.stdin)['total_catalogued'])")
-  ids=$(echo "$queue" | python3 -c "import sys,json; [print(d['id'], '|', d['filename']) for d in json.load(sys.stdin)['documents']]")
+  # Filter out doc_ids we've already attempted this run; emit at most BATCH_SIZE.
+  attempted_csv=$(tr '\n' ',' < "$ATTEMPTED")
+  ids=$(echo "$queue" | python3 -c "
+import sys, json
+already = set([s for s in sys.argv[1].split(',') if s])
+batch = int(sys.argv[2])
+fresh = [d for d in json.load(sys.stdin)['documents'] if d['id'] not in already][:batch]
+for d in fresh:
+    print(d['id'], '|', d['filename'])
+" "$attempted_csv" "$BATCH_SIZE")
 
   if [ -z "$ids" ]; then
-    echo "Queue empty. Stopping." | tee -a "$LOG"
+    echo "Queue empty (or all remaining already-attempted this run). Stopping." | tee -a "$LOG"
     break
   fi
 
@@ -80,6 +103,8 @@ while true; do
     doc_id=$(echo "$doc_id" | tr -d ' ')
     filename=$(echo "$filename" | sed 's/^ //')
     [ -z "$doc_id" ] && continue
+    # Record BEFORE the curl so even a script crash mid-call doesn't loop.
+    echo "$doc_id" >> "$ATTEMPTED"
     processed=$((processed + 1))
 
     t0=$(date +%s)
