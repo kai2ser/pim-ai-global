@@ -15,6 +15,7 @@
  */
 
 import { getServiceClient } from "@/lib/supabase";
+import { maybeAlertOnRefresh } from "@/lib/alerts";
 import { pefaScraper } from "./pefa";
 import { pimaScraper } from "./pima";
 import { wbgScraper } from "./wbg";
@@ -223,10 +224,24 @@ export async function refreshRegistry(
     });
   }
 
-  return {
+  const result: OrchestratorResult = {
     total_fetched: perScraper.reduce((s, r) => s + r.fetched_count, 0),
     total_new: perScraper.reduce((s, r) => s + r.new_count, 0),
     duration_ms: Date.now() - t0,
     per_scraper: perScraper,
   };
+
+  // Fire-and-forget alerting. maybeAlertOnRefresh is self-gated: skips on
+  // dry-runs, skips when no scraper failed, skips when no channel configured.
+  // Any send failure is logged inside and never propagates here.
+  await maybeAlertOnRefresh({
+    triggeredBy: opts.triggeredBy,
+    dryRun: opts.dryRun ?? false,
+    totalFetched: result.total_fetched,
+    totalNew: result.total_new,
+    durationMs: result.duration_ms,
+    perScraper: result.per_scraper,
+  });
+
+  return result;
 }
