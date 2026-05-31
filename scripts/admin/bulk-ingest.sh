@@ -127,9 +127,21 @@ for d in fresh:
       msg="OK   ${dt}s  chunks=$chunks pages=$pages  $filename"
     else
       fail=$((fail + 1))
-      recent+=(1)
       err=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','(no error msg)'))" 2>/dev/null || echo "$body")
-      msg="FAIL ${dt}s  code=$code  $filename  -- $err"
+      # Classify upstream "PDF not available" failures as benign for early-stop
+      # purposes. These mean the document is catalogued upstream but the PDF
+      # itself isn't published / accessible — common for new PEFA 2026
+      # assessments where the node exists but the report isn't out yet. They
+      # need operator attention eventually, but they should NOT count toward
+      # the rolling-failure circuit-breaker that's meant to catch real
+      # systemic pipeline bugs (OpenAI down, schema drift, etc.).
+      if echo "$err" | grep -qE 'No PDF link found|PDF download failed: 4[0-9]{2}|PDF too large|Parsed PDF text too short'; then
+        recent+=(0)
+        msg="SKIP ${dt}s  upstream PDF unavailable  $filename  -- $err"
+      else
+        recent+=(1)
+        msg="FAIL ${dt}s  code=$code  $filename  -- $err"
+      fi
     fi
     echo "[$processed] $msg" | tee -a "$LOG"
 
