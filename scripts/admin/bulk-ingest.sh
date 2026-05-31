@@ -44,8 +44,9 @@ BASE_URL="${BASE_URL:-https://pim-ai-global.vercel.app}"
 
 # Load ADMIN_TOKEN from .env.local without printing it. set -a exports all
 # new variables until set +a so the env file can use plain KEY=value lines.
+# This script lives at scripts/admin/, so .env.local is two dirs up.
 set -a
-. "$(dirname "$0")/../.env.local"
+. "$(dirname "$0")/../../.env.local"
 set +a
 : "${ADMIN_TOKEN:?ADMIN_TOKEN must be set (in .env.local or the environment)}"
 
