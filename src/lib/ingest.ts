@@ -167,6 +167,30 @@ interface ParsedPdf {
   pageStartOffsets: number[];
 }
 
+/**
+ * Strip the few Unicode patterns Postgres or the supabase-js JSON layer
+ * reject from a freshly-parsed PDF text string. pdf-parse occasionally
+ * emits these from older or oddly-encoded PDFs.
+ *
+ *   \x00 — NUL byte. Postgres TEXT columns reject it outright. Common in
+ *          PDFs that round-trip through legacy encodings.
+ *   Lone UTF-16 surrogates (D800-DBFF without a paired DC00-DFFF, or
+ *          vice versa) — produce invalid \uXXXX escapes when supabase-js
+ *          serialises the row to JSON for PostgREST. The server then
+ *          rejects the insert with "unsupported Unicode escape sequence".
+ *          The 4 Peru subnational PDFs that tripped the first bulk run
+ *          all had this pattern.
+ *
+ * Cheap, side-effect-free; safe to run on the whole document before
+ * chunking so we sanitize once and every chunk + embedding inherits it.
+ */
+function sanitizeForPostgres(text: string): string {
+  return text
+    .replace(/\x00/g, "")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
+    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1");
+}
+
 async function parsePdf(buffer: Buffer): Promise<ParsedPdf> {
   // Use a custom pagerender to emit each page joined by a form-feed marker so
   // we can recover per-page offsets. We then strip the markers from the final
@@ -184,7 +208,7 @@ async function parsePdf(buffer: Buffer): Promise<ParsedPdf> {
     },
   });
 
-  const raw = (data.text as string) ?? "";
+  const raw = sanitizeForPostgres((data.text as string) ?? "");
   // Walk the raw string, building cleaned text + per-page start offsets.
   const pages = raw.split(FORM_FEED);
   // Drop the trailing empty fragment that comes after the last FF.
