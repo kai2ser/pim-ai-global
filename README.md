@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# pim-ai-global
 
-## Getting Started
+AI-assisted semantic search and Q&A over four open collections of public-financial-management literature:
 
-First, run the development server:
+| Collection | Source | Documents |
+|---|---|---|
+| **PEFA National Reports** | [PEFA Secretariat](https://www.pefa.org) | Final, publicly-available country PEFA assessments |
+| **IMF PIMA Reports** | [IMF Infrastructure Governance](https://infrastructuregovern.imf.org) | Public Investment Management Assessments (standard + climate) |
+| **World Bank Public Finance Reviews** | [World Bank OKR](https://openknowledge.worldbank.org) | Public Expenditure & Public Finance Reviews |
+| **Global PIM Good Practices** | World Bank, IMF, EC, EIB, JICA guidance | Curated PIM best-practice literature |
+
+Live at **https://pim-ai-global.vercel.app**.
+
+## Stack
+
+Next.js 16 (App Router) on Vercel · Supabase Postgres with pgvector (HNSW indexes on `halfvec(3072)`) · OpenAI `text-embedding-3-large` for the shared embedding space · Anthropic Claude / OpenAI / Gemini / Mistral for the answer-generation step.
+
+## Architecture in one paragraph
+
+The four collections share a single `documents` registry and one chunk table per collection (`pefa_reports`, `pima_reports`, `wbg_pers`, `pim_literature`). Each chunk holds 3072-dim embeddings stored as `halfvec` for 50 % less storage at near-identical retrieval quality. Scrapers (`src/lib/scrapers/`) catalogue new documents into the registry; an ingest pipeline (`src/lib/ingest.ts`) downloads PDFs, chunks them with page-aware offsets, embeds the chunks, and promotes the documents row to `embedded`. A monthly Vercel cron re-runs the scrapers; the `/admin` page lets the operator trigger ad-hoc refresh + ingest runs and inspect recent activity.
+
+## Local development
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in Supabase + OpenAI + Anthropic keys
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+See [`AGENTS.md`](./AGENTS.md) for the operator runbook (admin token, bulk ingest, alerts) and [`CLAUDE.md`](./CLAUDE.md) for code-conventions notes.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## License
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Code: MIT. Embedded report content remains under the publishing institutions' respective terms.
