@@ -88,40 +88,94 @@ async function upsertBatch(
     .in("filepath", filepaths);
   const existingSet = new Set((existing ?? []).map((r) => r.filepath as string));
 
-  const rows = docs.map((d) => ({
-    collection_id: collection,
-    filename: d.filename,
-    filepath: d.filename,
-    title: d.title,
-    country: d.country,
-    year: d.year,
-    organization:
-      collection === "pefa_reports"
-        ? "PEFA Secretariat"
-        : collection === "pima_reports"
-          ? "IMF"
-          : collection === "wbg_pers"
-            ? "World Bank"
-            : null,
-    file_type: "pdf",
-    file_size_bytes: null,
-    page_count: null,
-    chunk_count: 0,
-    tags: d.tags,
-    source_url: d.sourceUrl,
-    source_last_seen: new Date().toISOString(),
-    ingestion_status: "catalogued",
-    metadata: d.metadata,
-  }));
+  // Why we split into INSERT(new) + UPDATE(existing) instead of one upsert:
+  // supabase-js .upsert() does ON CONFLICT DO UPDATE SET (every-column-in-
+  // payload). If `ingestion_status` is in the payload it gets stamped onto
+  // every existing row — silently demoting docs already in 'embedded' (or
+  // 'excluded', etc.) back to 'catalogued'. The June 1 cron hit this exact
+  // failure mode and undid the 100+ PIMA docs we'd just ingested.
+  //
+  // Split-batch keeps the cron idempotent for existing docs:
+  //   - INSERT-new branch sets ingestion_status='catalogued' (correct first-
+  //     time-seen value).
+  //   - UPDATE-existing branch refreshes metadata (title, country, year,
+  //     tags, source_url, source_last_seen) but never touches
+  //     ingestion_status, chunk_count, file_size_bytes, page_count — those
+  //     belong to the ingest pipeline.
+  const organization =
+    collection === "pefa_reports"
+      ? "PEFA Secretariat"
+      : collection === "pima_reports"
+        ? "IMF"
+        : collection === "wbg_pers"
+          ? "World Bank"
+          : null;
+  const now = new Date().toISOString();
 
-  const { error } = await supabase
-    .from("documents")
-    .upsert(rows, { onConflict: "collection_id,filepath" });
+  const newDocs = docs.filter((d) => !existingSet.has(d.filename));
+  const refreshDocs = docs.filter((d) => existingSet.has(d.filename));
 
-  if (error) {
-    throw new Error(`upsert into documents failed: ${error.message}`);
+  if (newDocs.length > 0) {
+    const insertRows = newDocs.map((d) => ({
+      collection_id: collection,
+      filename: d.filename,
+      filepath: d.filename,
+      title: d.title,
+      country: d.country,
+      year: d.year,
+      organization,
+      file_type: "pdf",
+      file_size_bytes: null,
+      page_count: null,
+      chunk_count: 0,
+      tags: d.tags,
+      source_url: d.sourceUrl,
+      source_last_seen: now,
+      ingestion_status: "catalogued",
+      metadata: d.metadata,
+    }));
+    const { error: insErr } = await supabase.from("documents").insert(insertRows);
+    if (insErr) {
+      throw new Error(`insert into documents failed: ${insErr.message}`);
+    }
   }
-  return rows.filter((r) => !existingSet.has(r.filepath)).length;
+
+  if (refreshDocs.length > 0) {
+    // One UPDATE per existing doc. supabase-js doesn't support per-row bulk
+    // updates with different values, but at ~100–800 refresh rows per cron
+    // (per collection) the round-trip cost is small relative to the
+    // scrape itself. Done in parallel via Promise.all for throughput.
+    await Promise.all(
+      refreshDocs.map((d) =>
+        supabase
+          .from("documents")
+          .update({
+            // Refresh metadata that legitimately changes upstream.
+            title: d.title,
+            country: d.country,
+            year: d.year,
+            tags: d.tags,
+            source_url: d.sourceUrl,
+            source_last_seen: now,
+            metadata: d.metadata,
+            // Deliberately NOT updating: ingestion_status, chunk_count,
+            // file_size_bytes, page_count. Those are owned by the ingest
+            // pipeline.
+          })
+          .eq("collection_id", collection)
+          .eq("filepath", d.filename)
+          .then(({ error }) => {
+            if (error) {
+              throw new Error(
+                `update documents failed for ${d.filename}: ${error.message}`
+              );
+            }
+          })
+      )
+    );
+  }
+
+  return newDocs.length;
 }
 
 async function logRun(
