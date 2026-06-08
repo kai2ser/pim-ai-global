@@ -14,13 +14,13 @@ const features = [
     icon: Search,
     title: "Semantic Search",
     description:
-      "Query across three curated document collections using state-of-the-art vector embeddings and retrieval-augmented generation.",
+      "Query across four curated document collections using state-of-the-art vector embeddings and retrieval-augmented generation.",
   },
   {
     icon: Database,
-    title: "Three Vector Databases",
+    title: "Four Vector Databases",
     description:
-      "Separate, optimized vector stores for Global PIM Literature, IMF PIMA Reports, and World Bank Public Finance Reviews.",
+      "Separate, optimized vector stores for Global PIM Literature, IMF PIMA Reports, PEFA National Reports, and World Bank Public Finance Reviews.",
   },
   {
     icon: FileText,
@@ -127,11 +127,12 @@ export default function Home() {
             </div>
             <div className="h-8 w-px bg-[#4472c4]" />
             {/* Middle */}
-            <div className="grid w-full max-w-3xl gap-4 sm:grid-cols-3">
+            <div className="grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
                 { label: "Global PIM Literature", count: "12 docs" },
                 { label: "IMF PIMA Reports", count: "107 docs" },
-                { label: "World Bank PFRs", count: "316 docs" },
+                { label: "PEFA National Reports", count: "227 docs" },
+                { label: "World Bank PFRs", count: "317 docs" },
               ].map((col) => (
                 <div
                   key={col.label}
@@ -166,7 +167,7 @@ export default function Home() {
             Ready to Explore PIM Knowledge?
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-[#99a2af]">
-            Start querying across three comprehensive document collections
+            Start querying across four comprehensive document collections
             covering global public investment management practices.
           </p>
           <div className="mt-8">
