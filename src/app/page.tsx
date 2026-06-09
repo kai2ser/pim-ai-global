@@ -8,6 +8,55 @@ import {
   Globe,
   BookOpen,
 } from "lucide-react";
+import {
+  COLLECTIONS,
+  getServiceClient,
+  type CollectionName,
+} from "@/lib/supabase";
+
+// Architecture-diagram boxes display the live unique-document count per
+// collection. We regenerate the page at most once per 60 s; in between,
+// every visit is served from the static cache for free.
+export const revalidate = 60;
+
+// Display order for the four collection boxes — kept explicit (not derived
+// from the COLLECTIONS array) so the homepage layout doesn't shift if the
+// underlying registration order changes.
+const COLLECTION_BOXES: Array<{ id: CollectionName; label: string }> = [
+  { id: "pim_literature", label: "Global PIM Literature" },
+  { id: "pima_reports", label: "IMF PIMA Reports" },
+  { id: "pefa_reports", label: "PEFA National Reports" },
+  { id: "wbg_pers", label: "World Bank PFRs" },
+];
+
+// Last-known-good counts. Used when the per-collection stats RPC errors out
+// (DB transient, build-time fetch can't reach Supabase, etc.) so the
+// architecture diagram never shows "0 docs". Keep these roughly current —
+// they're cosmetic, not the primary source of truth.
+const FALLBACK_COUNTS: Record<CollectionName, number> = {
+  pim_literature: 12,
+  pima_reports: 107,
+  pefa_reports: 227,
+  wbg_pers: 317,
+};
+
+async function getCollectionDocCounts(): Promise<Record<CollectionName, number>> {
+  try {
+    const supabase = getServiceClient();
+    const entries = await Promise.all(
+      COLLECTIONS.map(async (col): Promise<[CollectionName, number]> => {
+        const { data, error } = await supabase.rpc(col.statsFn);
+        if (error) return [col.id, FALLBACK_COUNTS[col.id]];
+        const row = Array.isArray(data) && data.length > 0 ? data[0] : data;
+        const n = (row as { unique_documents?: number } | null)?.unique_documents;
+        return [col.id, typeof n === "number" ? n : FALLBACK_COUNTS[col.id]];
+      })
+    );
+    return Object.fromEntries(entries) as Record<CollectionName, number>;
+  } catch {
+    return FALLBACK_COUNTS;
+  }
+}
 
 const features = [
   {
@@ -48,7 +97,8 @@ const features = [
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const docCounts = await getCollectionDocCounts();
   return (
     <>
       {/* Hero */}
@@ -128,21 +178,18 @@ export default function Home() {
             <div className="h-8 w-px bg-[#4472c4]" />
             {/* Middle */}
             <div className="grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                { label: "Global PIM Literature", count: "12 docs" },
-                { label: "IMF PIMA Reports", count: "107 docs" },
-                { label: "PEFA National Reports", count: "227 docs" },
-                { label: "World Bank PFRs", count: "317 docs" },
-              ].map((col) => (
+              {COLLECTION_BOXES.map((col) => (
                 <div
-                  key={col.label}
+                  key={col.id}
                   className="rounded-lg border border-[#dce4f0] bg-white p-4 text-center shadow-sm"
                 >
                   <Database className="mx-auto mb-2 h-6 w-6 text-[#4472c4]" />
                   <p className="text-sm font-semibold text-[#1d212b]">
                     {col.label}
                   </p>
-                  <p className="mt-1 text-xs text-[#778899]">{col.count}</p>
+                  <p className="mt-1 text-xs text-[#778899]">
+                    {docCounts[col.id].toLocaleString()} docs
+                  </p>
                 </div>
               ))}
             </div>
