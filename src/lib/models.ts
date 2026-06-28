@@ -42,21 +42,21 @@ export const MODELS: ModelOption[] = [
   },
   {
     id: "gpt-4o",
-    label: "GPT-4o",
+    label: "GPT-5.5",
     provider: "openai",
-    description: "OpenAI's flagship multimodal model — strong all-around.",
+    description: "OpenAI's flagship — strongest all-around with built-in reasoning.",
   },
   {
     id: "gpt-4o-mini",
-    label: "GPT-4o Mini",
+    label: "GPT-5.4 Mini",
     provider: "openai",
-    description: "OpenAI's efficient model — fast and affordable.",
+    description: "OpenAI's efficient tier — fast and affordable.",
   },
   {
     id: "o3-mini",
-    label: "o3-mini",
+    label: "GPT-5.4 Nano",
     provider: "openai",
-    description: "OpenAI's reasoning model — strong on analytical tasks.",
+    description: "OpenAI's lightest tier — lowest latency, lowest cost.",
   },
   {
     id: "gemini-pro",
