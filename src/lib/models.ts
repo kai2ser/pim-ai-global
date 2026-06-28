@@ -24,7 +24,7 @@ export interface ModelOption {
 export const MODELS: ModelOption[] = [
   {
     id: "claude-sonnet",
-    label: "Claude Sonnet 4",
+    label: "Claude Sonnet 4.6",
     provider: "anthropic",
     description: "Anthropic's balanced model — fast, accurate, cost-effective.",
   },
@@ -36,9 +36,9 @@ export const MODELS: ModelOption[] = [
   },
   {
     id: "claude-opus",
-    label: "Claude Opus 4",
+    label: "Claude Opus 4.8",
     provider: "anthropic",
-    description: "Anthropic's most capable model — best reasoning, higher cost.",
+    description: "Anthropic's most capable model — best reasoning, highest cost.",
   },
   {
     id: "gpt-4o",
