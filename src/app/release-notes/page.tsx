@@ -8,6 +8,47 @@ export const metadata: Metadata = {
 
 const releases = [
   {
+    version: "v2.2.0",
+    date: "June 2026",
+    type: "Feature" as const,
+    title: "Latest Models, Survey-Scale Querying & Word Export",
+    items: [
+      "Upgraded to the latest AI models: Claude Sonnet 4.6, Claude Opus 4.8, Claude Haiku 4.5, GPT-5.5, GPT-5.4 Mini, GPT-5.4 Nano, Gemini 2.5 Pro, Gemini 2.5 Flash, and Mistral Large",
+      "Collection inventory awareness: the assistant now sees the full catalogue of every report in a collection, so it can report exact totals, build summary tables by country and year, and survey the whole corpus — not just the top retrieved passages",
+      "Deeper retrieval: up to 60 source passages per query (previously 8), with much larger context budgets for richer multi-document synthesis",
+      "Longer answers: comprehensive, structured responses (e.g. multi-stage analyses across many countries) no longer cut off mid-way",
+      "Download any answer as a Word document — question, model, full answer, and source citations included",
+      "Model picker now shows exact versions, and each answer reports which model generated it",
+      "Fixed Gemini 2.5 streaming so its answers render correctly",
+    ],
+  },
+  {
+    version: "v2.1.0",
+    date: "May 2026",
+    type: "Feature" as const,
+    title: "Registry, Admin Console & Automated Updates",
+    items: [
+      "New Registry page: browse every catalogued report by collection, filter by country and category, and toggle to the latest report per country/category",
+      "Admin console for operators: trigger catalogue refreshes and document ingestion on demand, with a live activity log of recent runs",
+      "Monthly automated refresh: scrapers check the IMF (PIMA) and World Bank Open Knowledge Repository sources for newly published reports and add them to the registry",
+      "Optional failure alerting: operators can receive email or webhook notifications if an automated refresh encounters a problem",
+      "Robust ingestion pipeline: PDF download, page-aware chunking, and embedding, with safeguards for very large and irregularly-encoded documents",
+    ],
+  },
+  {
+    version: "v2.0.0",
+    date: "May 2026",
+    type: "Release" as const,
+    title: "PEFA Collection & Unified Embeddings",
+    items: [
+      "Added a fourth collection: PEFA National Reports — Public Expenditure and Financial Accountability assessments from the PEFA Secretariat",
+      "Unified all four collections on OpenAI text-embedding-3-large (3,072 dimensions) for higher-quality semantic search across the board",
+      "Added Google Gemini and Mistral as answer-generation options alongside Claude and GPT",
+      "Upgraded vector indexes to HNSW for faster, more accurate retrieval at scale",
+      "Homepage architecture diagram now shows all four collections with live, self-updating document counts",
+    ],
+  },
+  {
     version: "v1.3.0",
     date: "April 2026",
     type: "Feature" as const,
