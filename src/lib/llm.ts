@@ -97,9 +97,12 @@ interface MapEntry {
 }
 
 const MODEL_MAP: Record<string, MapEntry> = {
-  "claude-sonnet":  { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+  // Anthropic model pins. Bump these whenever Anthropic ships a new GA in
+  // the 4-series; the May-2025 snapshots were retired in mid-2026 and
+  // started returning errors against /v1/messages.
+  "claude-sonnet":  { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   "claude-haiku":   { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
-  "claude-opus":    { provider: "anthropic", modelId: "claude-opus-4-20250514" },
+  "claude-opus":    { provider: "anthropic", modelId: "claude-opus-4-8" },
   "gpt-4o":         { provider: "openai",    modelId: "gpt-4o" },
   "gpt-4o-mini":    { provider: "openai",    modelId: "gpt-4o-mini" },
   "o3-mini":        { provider: "openai",    modelId: "o3-mini" },
@@ -387,69 +390,29 @@ export async function* generateAnswerStream(
     return;
   }
 
-  // ── Gemini streaming (raw SSE) ──────────────────────────────────────
+  // ── Gemini (non-stream fallback, yielded as one frame) ──────────────
+  // Gemini 2.5 Pro/Flash are thinking models: the streamGenerateContent
+  // endpoint emits internal "thought" frames first and only emits the final
+  // answer at the end (or not at all in a parseable shape — observed in
+  // mid-2026 that both gemini-2.5-pro and gemini-2.5-flash returned an SSE
+  // sequence with usageMetadata but zero parsable text events). The result
+  // was a UI that showed sources, then a "done" with no answer body.
+  //
+  // Until Google stabilises a clean thinking-aware streaming contract,
+  // route Gemini through generateAnswer (the regular non-stream
+  // generateContent endpoint, which DOES return parsable text) and yield
+  // the full response as a single text frame. Trade-off: the user sees a
+  // longer spinner before any text appears, but they actually see text.
   if (entry.provider === "google") {
-    const apiKey = process.env.GOOGLE_GENAI_API_KEY;
-    if (!apiKey) throw new Error("Missing GOOGLE_GENAI_API_KEY");
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${entry.modelId}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: { maxOutputTokens: maxTokens },
-        }),
-      }
-    );
-    if (!res.ok || !res.body) {
-      throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let inputTokens: number | undefined;
-    let outputTokens: number | undefined;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // Gemini SSE emits "data: {...}\n\n" frames
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) !== -1) {
-        const frame = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 2);
-        if (!frame.startsWith("data:")) continue;
-        const payload = frame.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const obj = JSON.parse(payload) as {
-            candidates?: { content?: { parts?: { text?: string }[] } }[];
-            usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
-          };
-          const text = obj.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
-          if (text) yield { type: "text", content: text };
-          if (obj.usageMetadata) {
-            inputTokens = obj.usageMetadata.promptTokenCount;
-            outputTokens = obj.usageMetadata.candidatesTokenCount;
-          }
-        } catch {
-          // skip malformed frame
-        }
-      }
-    }
-
+    const resp = await generateAnswer(modelId, systemPrompt, userMessage, maxTokens);
+    if (resp.text) yield { type: "text", content: resp.text };
     yield {
       type: "done",
       content: "",
       model: entry.modelId,
       provider: PROVIDER_LABEL.google,
-      inputTokens,
-      outputTokens,
+      inputTokens: resp.inputTokens,
+      outputTokens: resp.outputTokens,
     };
     return;
   }
