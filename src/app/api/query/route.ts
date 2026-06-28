@@ -13,10 +13,13 @@ import {
 } from "@/lib/cache";
 import { logQuery, timed } from "@/lib/logger";
 
-// Vercel: cap the function at 60s so streamed RAG calls (chunk retrieval +
-// LLM token stream) don't get killed at the Hobby-tier 10s default.
+// Vercel: cap the function generously. Comprehensive survey answers (the
+// 8-stage health analyses, full country/year tables) can stream 6–8K output
+// tokens, which at typical model speeds is well over a minute. 60s was
+// killing those mid-stream, so allow up to 180s (Pro permits 300). The
+// shorter the answer, the sooner the function returns regardless.
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 const MAX_QUERY_LENGTH = 2000;
 // Cap the JSON body so we early-reject before parsing megabytes. The largest
@@ -68,6 +71,25 @@ const DEFAULT_MATCH_COUNT = 40;
 // inventory (see buildInventory). Bounds the token cost of the manifest
 // for very large collections; today the biggest (wbg_pers) is ~316.
 const MAX_INVENTORY_DOCS = 800;
+
+// Max output tokens per answer. Was a flat 2048, which truncated long
+// structured answers (e.g. an 8-stage health survey reached only ~stage 3
+// before hitting the cap and stopping mid-sentence). Big models get a
+// generous budget so comprehensive answers complete; small/fast models get
+// less since they're chosen for quick lookups. Kept under the level that
+// would routinely push generation past maxDuration (180s).
+const MAX_TOKENS_BY_MODEL: Record<string, number> = {
+  "claude-haiku":  4096,
+  "gpt-4o-mini":   4096,
+  "gemini-flash":  4096,
+  "o3-mini":       5000,
+  "claude-sonnet": 8000,
+  "gpt-4o":        8000,
+  "gemini-pro":    8000,
+  "mistral-large": 8000,
+  "claude-opus":   8000,
+};
+const DEFAULT_MAX_TOKENS = 8000;
 
 interface ChunkResult {
   content: string;
@@ -254,12 +276,11 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Check response cache (non-streaming only) ─────────────────────
-    // The `rag-v2:` prefix is a cache-version tag — bumping it invalidates
-    // every previously-cached answer in one stroke. Needed here because the
-    // inventory + deeper-retrieval pipeline produces materially different
-    // answers, and we don't want stale pre-inventory responses served for
-    // identical query+collection+model triples.
-    const cacheKey = responseCacheKey(`rag-v2:${query}`, collection, selectedModel);
+    // The `rag-vN:` prefix is a cache-version tag — bumping it invalidates
+    // every previously-cached answer in one stroke. v3: the maxTokens bump
+    // means previously-cached answers were truncated at 2048 output tokens
+    // (the "answer cut off mid-sentence" bug); don't serve those stale.
+    const cacheKey = responseCacheKey(`rag-v3:${query}`, collection, selectedModel);
 
     if (!streamMode) {
       try {
@@ -335,6 +356,7 @@ export async function POST(req: NextRequest) {
     // it through. Without the filter, the RPC searches across all chunks.
     const supabase = getServiceClient();
     const matchCount = MATCH_COUNT_BY_MODEL[selectedModel] ?? DEFAULT_MATCH_COUNT;
+    const maxTokens = MAX_TOKENS_BY_MODEL[selectedModel] ?? DEFAULT_MAX_TOKENS;
 
     // Resolve the latest-only document filter once; both retrieval and the
     // injected inventory use the same scope so they stay consistent.
@@ -499,7 +521,7 @@ ${promptInjectionGuard}`;
             let streamOutputTokens = 0;
 
             // Stream LLM tokens
-            for await (const event of generateAnswerStream(selectedModel, systemPrompt, userMessage, 2048)) {
+            for await (const event of generateAnswerStream(selectedModel, systemPrompt, userMessage, maxTokens)) {
               if (event.type === "text") {
                 fullAnswer += event.content;
                 controller.enqueue(
@@ -592,7 +614,7 @@ ${promptInjectionGuard}`;
 
     // ── 5b. Non-streaming response ────────────────────────────────────
     const [llmResponse, llmMs] = await timed(() =>
-      generateAnswer(selectedModel, systemPrompt, userMessage, 2048)
+      generateAnswer(selectedModel, systemPrompt, userMessage, maxTokens)
     );
 
     const totalMs = Date.now() - requestStart;
