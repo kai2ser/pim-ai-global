@@ -59,6 +59,7 @@ export default function QueryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -87,6 +88,8 @@ export default function QueryPage() {
   };
 
   const handleDownloadDoc = useCallback(async () => {
+    setDownloadError("");
+    try {
     // Lazy-import marked on click so its ~25 KB doesn't bloat first-paint
     // for users who never use the download button.
     const { marked } = await import("marked");
@@ -180,10 +183,23 @@ export default function QueryPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
+    a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Defer cleanup. Revoking the object URL (or removing the anchor)
+    // synchronously right after click() races the browser's download and
+    // can cancel it silently — this was the "button does nothing" bug.
+    // Giving the download a moment to start before revoking fixes it.
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 4000);
+    } catch (err) {
+      console.error("Word download failed:", err);
+      setDownloadError(
+        "Could not generate the Word document. Please try again, or use Copy to paste the answer elsewhere."
+      );
+    }
   }, [answer, collection, model, query, sources]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -575,19 +591,26 @@ export default function QueryPage() {
 
           {/* Bottom action bar — repeat the download here so it's at hand
               after the user has scrolled through the answer + sources. */}
-          <div className="flex items-center justify-between border-t border-[#dce4f0] pt-4">
-            <p className="text-xs text-[#778899]">
-              Save this result as a Word document for sharing or archiving.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDownloadDoc}
-              aria-label="Download answer as Word document"
-            >
-              <Download className="mr-2 h-4 w-4" aria-hidden="true" />
-              Download as Word
-            </Button>
+          <div className="border-t border-[#dce4f0] pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-[#778899]">
+                Save this result as a Word document for sharing or archiving.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadDoc}
+                aria-label="Download answer as Word document"
+              >
+                <Download className="mr-2 h-4 w-4" aria-hidden="true" />
+                Download as Word
+              </Button>
+            </div>
+            {downloadError && (
+              <p className="mt-2 text-xs text-red-600" role="alert">
+                {downloadError}
+              </p>
+            )}
           </div>
         </div>
       )}
