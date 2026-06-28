@@ -103,9 +103,16 @@ const MODEL_MAP: Record<string, MapEntry> = {
   "claude-sonnet":  { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   "claude-haiku":   { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
   "claude-opus":    { provider: "anthropic", modelId: "claude-opus-4-8" },
-  "gpt-4o":         { provider: "openai",    modelId: "gpt-4o" },
-  "gpt-4o-mini":    { provider: "openai",    modelId: "gpt-4o-mini" },
-  "o3-mini":        { provider: "openai",    modelId: "o3-mini" },
+  // OpenAI model pins. The dropdown ids (gpt-4o / gpt-4o-mini / o3-mini)
+  // are kept as stable internal keys, but the underlying modelIds now
+  // target the current GA gpt-5.x family — gpt-4o, gpt-4o-mini, and
+  // o3-mini are 2024-era and were superseded by the 5.x line during 2026.
+  // Probed Jun 2026: gpt-5.5, gpt-5.4-mini, gpt-5.4-nano are the current
+  // GA chat-completion models. Pro-tier variants (gpt-5.5-pro etc.) need
+  // the Responses API and aren't drop-in for chat completions.
+  "gpt-4o":         { provider: "openai",    modelId: "gpt-5.5" },
+  "gpt-4o-mini":    { provider: "openai",    modelId: "gpt-5.4-mini" },
+  "o3-mini":        { provider: "openai",    modelId: "gpt-5.4-nano" },
   "gemini-pro":     { provider: "google",    modelId: "gemini-2.5-pro" },
   "gemini-flash":   { provider: "google",    modelId: "gemini-2.5-flash" },
   "mistral-large":  { provider: "mistral",   modelId: "mistral-large-latest" },
