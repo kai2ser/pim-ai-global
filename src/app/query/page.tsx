@@ -63,6 +63,7 @@ export default function QueryPage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const answerRef = useRef<HTMLDivElement>(null);
 
   // Load history on mount
   useEffect(() => {
@@ -90,20 +91,28 @@ export default function QueryPage() {
   const handleDownloadDoc = useCallback(async () => {
     setDownloadError("");
     try {
-    // Lazy-import marked on click so its ~25 KB doesn't bloat first-paint
-    // for users who never use the download button.
-    const { marked } = await import("marked");
-    marked.setOptions({ gfm: true, breaks: false });
-
     const collectionLabel =
       COLLECTIONS.find((c) => c.id === collection)?.label ?? collection;
     const modelLabel = MODELS.find((m) => m.id === model)?.label ?? model;
     const askedAt = new Date().toISOString().slice(0, 19).replace("T", " ") + " UTC";
-    const answerHtml = await marked.parse(answer);
+
+    // Reuse the answer HTML already rendered on screen by <MarkdownRenderer>
+    // (grabbed via answerRef). This is the most robust source — no extra
+    // markdown library to load at click time (an earlier marked-based
+    // approach failed in the browser), and the document matches exactly what
+    // the user sees. Fall back to a minimal markdown→HTML conversion if the
+    // ref isn't available for any reason.
+    const escForFallback = (s: string) =>
+      s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    const answerHtml =
+      answerRef.current?.innerHTML ||
+      `<pre style="white-space:pre-wrap;font-family:Calibri,Arial,sans-serif;">${escForFallback(answer)}</pre>`;
 
     // Escape arbitrary text for safe HTML embedding (user-typed query + source
-    // excerpts/filenames that came back from the API). Answer HTML is already
-    // sanitised-ish by marked.
+    // excerpts/filenames that came back from the API).
     const esc = (s: string) =>
       s
         .replace(/&/g, "&amp;")
@@ -196,8 +205,9 @@ export default function QueryPage() {
     }, 4000);
     } catch (err) {
       console.error("Word download failed:", err);
+      const detail = err instanceof Error ? err.message : String(err);
       setDownloadError(
-        "Could not generate the Word document. Please try again, or use Copy to paste the answer elsewhere."
+        `Could not generate the Word document (${detail}). Please try again, or use Copy to paste the answer elsewhere.`
       );
     }
   }, [answer, collection, model, query, sources]);
@@ -551,7 +561,7 @@ export default function QueryPage() {
                 </div>
               )}
             </div>
-            <div className="mt-3 text-sm leading-relaxed">
+            <div ref={answerRef} className="mt-3 text-sm leading-relaxed">
               <MarkdownRenderer content={answer} />
             </div>
           </div>
